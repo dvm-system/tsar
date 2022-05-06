@@ -30,6 +30,8 @@
 #include <flang/Parser/parsing.h>
 #include <flang/Semantics/semantics.h>
 #include <llvm/ADT/StringMap.h>
+#include <llvm/ADT/PointerUnion.h>
+#include <type_traits>
 
 namespace llvm {
 class Module;
@@ -37,10 +39,59 @@ class DICompileUnit;
 }
 
 namespace tsar {
-class FlangTransformationContext : public TransformationContextBase {
-  using MangledToSourceMapT = llvm::StringMap<Fortran::semantics::Symbol *>;
-
+class FlangASTUnitRef {
 public:
+  using ParserUnitT = llvm::PointerUnion<Fortran::parser::ProgramUnit *,
+                                         Fortran::parser::InternalSubprogram *,
+                                         Fortran::parser::ModuleSubprogram *>;
+  using SemanticsUnitT = Fortran::semantics::Symbol *;
+
+  FlangASTUnitRef() = default;
+
+  FlangASTUnitRef(ParserUnitT PU, SemanticsUnitT SU) :
+    mSemanticsUnit(SU), mParserUnit(PU) {}
+
+  bool isDeclaration() const { return mSemanticsUnit && !mParserUnit; }
+
+  bool isNull() const { return !mSemanticsUnit; }
+  operator bool() const { return !isNull(); }
+
+  operator SemanticsUnitT () const { return mSemanticsUnit; }
+  operator ParserUnitT() const { return mParserUnit; }
+
+  SemanticsUnitT getSemanticsUnit() const noexcept { return mSemanticsUnit; }
+  ParserUnitT getParserUnit() const { return mParserUnit; }
+
+  template<typename T> bool is() const  {
+    return mParserUnit.is<std::add_pointer_t<T>>();
+  }
+
+  template<typename T> T & get() const  {
+    return *mParserUnit.get<std::add_pointer_t<T>>();
+  }
+
+  template<typename T> T * dyn_cast() const  {
+    return mParserUnit.dyn_cast<std::add_pointer_t<T>>();
+  }
+
+  template<typename VisitorT> auto visit(VisitorT &&V) {
+    assert(!isNull() && !isDeclaration() && "Reference must not be null!");
+    if (auto *PU{dyn_cast<Fortran::parser::ProgramUnit>()})
+      return V(*PU, *mSemanticsUnit);
+    if (auto *PU{dyn_cast<Fortran::parser::InternalSubprogram>()})
+      return V(*PU, *mSemanticsUnit);
+    if (auto *PU{dyn_cast<Fortran::parser::ModuleSubprogram>()})
+      return V(*PU, *mSemanticsUnit);
+  }
+private:
+  ParserUnitT mParserUnit{nullptr};
+  SemanticsUnitT mSemanticsUnit{nullptr};
+};
+
+class FlangTransformationContext : public TransformationContextBase {
+  using MangledToSourceMapT = llvm::StringMap<FlangASTUnitRef>;
+public:
+
   static bool classof(const TransformationContextBase *Ctx) noexcept {
     return Ctx->getKind() == TC_Flang;
   }
@@ -107,10 +158,10 @@ public:
   /// Return a declaration for a mangled name.
   ///
   /// \pre Transformation instance must be configured.
-  Fortran::semantics::Symbol * getDeclForMangledName(llvm::StringRef Name) {
+  FlangASTUnitRef getDeclForMangledName(llvm::StringRef Name) {
     assert(hasInstance() && "Transformation context is not configured!");
     auto I = mGlobals.find(Name);
-    return (I != mGlobals.end()) ? I->getValue() : nullptr;
+    return (I != mGlobals.end()) ? I->getValue() : FlangASTUnitRef{};
   }
 
 private:

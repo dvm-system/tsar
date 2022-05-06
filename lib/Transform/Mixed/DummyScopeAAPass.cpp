@@ -114,10 +114,11 @@ bool FlangDummyAliasAnalysis::runOnFunction(Function &F) {
                       << ": transformation context is not available\n");
     return false;
   }
-  auto *ASTSub{TfmCtx->getDeclForMangledName(F.getName())};
+  auto ASTSub{TfmCtx->getDeclForMangledName(F.getName())};
   if (!ASTSub)
     return false;
-  auto *Details{ASTSub->detailsIf<semantics::SubprogramDetails>()};
+  auto *Details{
+      ASTSub.getSemanticsUnit()->detailsIf<semantics::SubprogramDetails>()};
   if (any_of(Details->dummyArgs(), [](auto *Dummy) {
     return Dummy->attrs().HasAny(
         {Fortran::semantics::Attr::TARGET, Fortran::semantics::Attr::POINTER});

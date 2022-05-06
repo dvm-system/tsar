@@ -69,9 +69,8 @@ class ConstantCollector {
       StringMap<SmallVector<parser::ProvenanceRange, 4>>;
   using KindToConstantMap = StringMap<ConstantToProvenanceMap>;
 public:
-  explicit ConstantCollector(const parser::CookedSource &Cooked,
-      const semantics::Symbol *Unit)
-      : mCooked(Cooked), mUnit(Unit) {}
+  explicit ConstantCollector(const parser::CookedSource &Cooked)
+      : mCooked(Cooked) {}
 
   template <typename T> bool Pre(T &N) {
     PushBackIfArray(N);
@@ -100,51 +99,19 @@ public:
   bool Pre(parser::ProgramUnit &PU) {
     if (mIsProcessed)
       return false;
-    return std::visit(
-        common::visitors{
-            [](auto &) { return false; },
-            [this](common::Indirection<parser::MainProgram> &X) {
-              if (const auto &S{std::get<
-                      std::optional<parser::Statement<parser::ProgramStmt>>>(
-                      X.value().t)})
-                return (mIsProcessed = (S->statement.v.symbol == mUnit));
-              return false;
-            },
-            [this](common::Indirection<parser::FunctionSubprogram> &X) {
-              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
-                  X.value().t)};
-              const auto &Name{std::get<parser::Name>(S.statement.t)};
-              return (mIsProcessed = (Name.symbol == mUnit));
-            },
-            [this](common::Indirection<parser::SubroutineSubprogram> &X) {
-              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
-                  X.value().t)};
-              const auto &Name{std::get<parser::Name>(S.statement.t)};
-              return (mIsProcessed = (Name.symbol == mUnit));
-            },
-            [](common::Indirection<parser::Module> &M) { return true; }},
-        PU.u);
+    return mIsProcessed = true;
+  }
+
+  bool Pre(parser::InternalSubprogram &IS) {
+    if (mIsProcessed)
+      return false;
+    return mIsProcessed = true;
   }
 
   bool Pre(parser::ModuleSubprogram &MS) {
     if (mIsProcessed)
       return false;
-    return std::visit(
-        common::visitors{
-            [](auto &) { return false; },
-            [this](common::Indirection<parser::FunctionSubprogram> &X) {
-              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
-                  X.value().t)};
-              const auto &Name{std::get<parser::Name>(S.statement.t)};
-              return (mIsProcessed = (Name.symbol == mUnit));
-            },
-            [this](common::Indirection<parser::SubroutineSubprogram> &X) {
-              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
-                  X.value().t)};
-              const auto &Name{std::get<parser::Name>(S.statement.t)};
-              return (mIsProcessed = (Name.symbol == mUnit));
-            }},
-        MS.u);
+    return mIsProcessed = true;
   }
 
   bool Pre(parser::Name &N) {
@@ -216,7 +183,6 @@ private:
   }
 
   const parser::CookedSource &mCooked;
-  const semantics::Symbol *mUnit{nullptr};
   bool mIsProcessed{false};
   SmallVector<std::pair<void *, const evaluate::ArrayRef *>, 4> mNestedRefs;
   KindToConstantMap mConstantsToEliminate;
@@ -255,22 +221,20 @@ bool FlangConstantReplacementPass::runOnFunction(Function &F) {
                       << ": transformation context is not available\n");
     return false;
   }
-  auto *ASTSub{TfmCtx->getDeclForMangledName(F.getName())};
-  // TODO(kaniandr@gmail.com): the MAIN function without PROGRAM statement
-  // does not have a symbol
-  if (!ASTSub) {
+  auto ASTSub{TfmCtx->getDeclForMangledName(F.getName())};
+  if (!ASTSub || ASTSub.isDeclaration()) {
     LLVM_DEBUG(dbgs() << "[CONST ELIMINATION]: skip function " << F.getName()
-                      << ": source-level symbol is not available\n");
+                      << ": parse tree is not available\n");
     return false;
   }
   auto &Cooked{TfmCtx->getParsing().cooked()};
   auto &Rewriter{TfmCtx->getRewriter()};
-  ConstantCollector DRV{TfmCtx->getParsing().cooked(), ASTSub};
-  parser::Walk(*TfmCtx->getParsing().parseTree(), DRV);
+  ConstantCollector DRV{TfmCtx->getParsing().cooked()};
+  ASTSub.visit([&DRV](auto & PU, auto & S) { parser::Walk(PU, DRV); });
   if (DRV.getToEliminate().empty())
     return false;
   if (!DRV.getFirstStmtProvenance()) {
-    toDiag(TfmCtx->getContext(), ASTSub->name(),
+    toDiag(TfmCtx->getContext(), ASTSub.getSemanticsUnit()->name(),
            tsar::diag::warn_fortran_no_execution_part);
     return false;
   }
@@ -286,7 +250,7 @@ bool FlangConstantReplacementPass::runOnFunction(Function &F) {
   }
   StringSet Replacement;
   auto findSymbol = [&GS = TfmCtx->getContext().globalScope(),
-                     &LS = *ASTSub->scope(),
+                     &LS = *ASTSub.getSemanticsUnit()->scope(),
                      &Replacement](StringRef Name) -> bool {
     if (auto *S{GS.FindSymbol(parser::CharBlock{Name.data(), Name.size()})})
       return true;
