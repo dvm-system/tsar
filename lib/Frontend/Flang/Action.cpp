@@ -27,6 +27,7 @@
 #include "tsar/Frontend/Flang/Action.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Flang/TransformationContext.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <flang/Frontend/CompilerInstance.h>
 #include <flang/Lower/Bridge.h>
 #include <flang/Lower/Support/Verifier.h>
@@ -34,7 +35,10 @@
 #include <mlir/IR/Dialect.h>
 #include <mlir/Pass/PassManager.h>
 #include <llvm/ADT/IntrusiveRefCntPtr.h>
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
 
 using namespace llvm;
@@ -108,6 +112,33 @@ bool tsar::FlangMainAction::shouldEraseOutputFiles() {
   return Fortran::frontend::CodeGenAction::shouldEraseOutputFiles();
 }
 
+namespace {
+struct DICompileUnitReplacer {
+  DICompileUnitReplacer(DICompileUnit *From, DICompileUnit *To) :
+    From(From), To(To) {}
+
+  void visitMDNode(MDNode &MD) {
+    if (!MDNodes.insert(&MD).second)
+      return;
+    for (unsigned I{0}, EI{MD.getNumOperands()}; I < EI; ++I) {
+      auto &Op{MD.getOperand(I)};
+      if (!Op.get())
+        continue;
+      if (auto *CU{dyn_cast<DICompileUnit>(Op)}; CU && CU == From)
+        MD.replaceOperandWith(I, To);
+      if (auto *N = dyn_cast<MDNode>(Op)) {
+        visitMDNode(*N);
+        continue;
+      }
+    }
+  }
+
+  SmallPtrSet<const Metadata *, 32> MDNodes;
+  DICompileUnit *From;
+  DICompileUnit *To;
+};
+}
+
 void tsar::FlangMainAction::executeAction() {
   auto &CI{getInstance()};
   generateLLVMIR();
@@ -117,6 +148,39 @@ void tsar::FlangMainAction::executeAction() {
   auto CUs{llvmModule->getNamedMetadata("llvm.dbg.cu")};
   if (CUs->getNumOperands() == 1) {
     auto *CU{cast<DICompileUnit>(*CUs->op_begin())};
+    SmallString<128> CUFilePath;
+    auto *DIF{CU->getFile()};
+    if (DIF)
+      getAbsolutePath(*CU, CUFilePath);
+    if (!sys::fs::exists(CUFilePath) || !isFortran(CU->getSourceLanguage())) {
+      auto Filename{getCurrentFile()};
+      assert(sys::path::is_absolute(Filename) &&
+             "Path to a processed file must be absolute!");
+      SmallString<128> Directory{Filename};
+      sys::path::remove_filename(Directory);
+      auto *NewDIFile{
+          DIFile::get(llvmModule->getContext(), Filename, Directory)};
+      auto NewDICU{DICompileUnit::getDistinct(
+          llvmModule->getContext(),
+          isFortran(CU->getSourceLanguage()) ? CU->getSourceLanguage()
+                                             : dwarf::DW_LANG_Fortran08,
+          NewDIFile, CU->getProducer(), CU->isOptimized(), CU->getFlags(),
+          CU->getRuntimeVersion(), CU->getSplitDebugFilename(),
+          CU->getEmissionKind(), CU->getEnumTypes(), CU->getRetainedTypes(),
+          CU->getGlobalVariables(), CU->getImportedEntities(), CU->getMacros(),
+          CU->getDWOId(), CU->getSplitDebugInlining(),
+          CU->getDebugInfoForProfiling(), CU->getNameTableKind(),
+          CU->getRangesBaseAddress(), CU->getSysRoot(), CU->getSDK())};
+      llvmModule->setSourceFileName(Filename);
+      DICompileUnitReplacer R{CU, NewDICU};
+      for (auto &F : *llvmModule) {
+        SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
+        F.getAllMetadata(MDs);
+        for (auto &MD : MDs)
+          R.visitMDNode(*MD.second);
+      }
+      CUs->setOperand(0, NewDICU);
+    }
     IntrusiveRefCntPtr<TransformationContextBase> TfmCtx{
         new FlangTransformationContext{
             CI.getParsing(), CI.getInvocation().getFortranOpts(),
