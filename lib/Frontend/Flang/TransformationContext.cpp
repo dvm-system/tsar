@@ -25,6 +25,8 @@
 #include "tsar/Frontend/Flang/TransformationContext.h"
 #include "tsar/Support/Flang/Diagnostic.h"
 #include <bcl/tuple_utils.h>
+#include <flang/Parser/parse-tree-visitor.h>
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/DebugInfoMetadata.h>
 
@@ -33,8 +35,94 @@ using namespace llvm;
 using namespace Fortran;
 
 namespace {
+class ProgramUnitCollector {
+public:
+  template <typename T> bool Pre(T &N) { return true; }
+  template <typename T> void Post(T &N) {}
+
+  bool Pre(parser::ProgramUnit &PU) {
+    return std::visit(
+        common::visitors{
+            [](auto &) { return false; },
+            [this, &PU](common::Indirection<parser::MainProgram> &X) {
+              mParserMain = &PU;
+              return true;
+            },
+            [this, &PU](common::Indirection<parser::FunctionSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
+                  X.value().t)};
+              const auto &Name{std::get<parser::Name>(S.statement.t)};
+              mUnits.try_emplace(Name.symbol, &PU);
+              return true;
+            },
+            [this, &PU](common::Indirection<parser::SubroutineSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
+                  X.value().t)};
+              const auto &Name{std::get<parser::Name>(S.statement.t)};
+              mUnits.try_emplace(Name.symbol, &PU);
+              return true;
+            },
+            [](common::Indirection<parser::Module> &) { return true; }},
+        PU.u);
+  }
+
+  bool Pre(parser::InternalSubprogram &PU) {
+    return std::visit(
+        common::visitors{
+            [](auto &) { return false; },
+            [this, &PU](common::Indirection<parser::FunctionSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
+                  X.value().t)};
+              const auto &Name{std::get<parser::Name>(S.statement.t)};
+              mUnits.try_emplace(Name.symbol, &PU);
+              return true;
+            },
+            [this, &PU](common::Indirection<parser::SubroutineSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
+                  X.value().t)};
+              const auto &Name{std::get<parser::Name>(S.statement.t)};
+              mUnits.try_emplace(Name.symbol, &PU);
+              return true;
+            }},
+        PU.u);
+  }
+
+  bool Pre(parser::ModuleSubprogram &PU) {
+    return std::visit(
+        common::visitors{
+            [](auto &) { return false; },
+            [this, &PU](common::Indirection<parser::FunctionSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
+                  X.value().t)};
+              const auto &Name{std::get<parser::Name>(S.statement.t)};
+              mUnits.try_emplace(Name.symbol, &PU);
+              return true;
+            },
+            [this, &PU](common::Indirection<parser::SubroutineSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
+                  X.value().t)};
+              const auto &Name{std::get<parser::Name>(S.statement.t)};
+              mUnits.try_emplace(Name.symbol, &PU);
+              return true;
+            }},
+        PU.u);
+  }
+
+  auto getMainParserUnit() const noexcept { return mParserMain; }
+
+  auto findParserUnit(FlangASTUnitRef::SemanticsUnitT U) const {
+    auto I{mUnits.find(U)};
+    return I != mUnits.end() ? I->second : nullptr;
+  }
+
+private:
+  FlangASTUnitRef::ParserUnitT mParserMain;
+  DenseMap<FlangASTUnitRef::SemanticsUnitT, FlangASTUnitRef::ParserUnitT>
+      mUnits;
+};
+
 using NameHierarchyMapT = std::map<SmallVector<std::string, 3>, std::string>;
-using MangledToSourceMapT = llvm::StringMap<semantics::Symbol *>;
+using MangledToSourceMapT = llvm::StringMap<FlangASTUnitRef>;
 
 void collect(const Module &M, const DICompileUnit &CU,
     NameHierarchyMapT &NameHierarchy) {
@@ -60,7 +148,8 @@ void collect(const Module &M, const DICompileUnit &CU,
 }
 
 void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
-    const NameHierarchyMapT &NameHierarchy, MangledToSourceMapT &Map) {
+           const NameHierarchyMapT &NameHierarchy,
+           const ProgramUnitCollector &Collector, MangledToSourceMapT &Map) {
   if (auto *S{Parent.symbol()}) {
     Names.push_back((Parent.kind() != semantics::Scope::Kind::MainProgram ||
                      !S->name().empty())
@@ -68,10 +157,16 @@ void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
                         : FlangTransformationContext::UnnamedProgramStub.str());
     if (Parent.kind() == semantics::Scope::Kind::Subprogram ||
         Parent.kind() == semantics::Scope::Kind::MainProgram)
-      if (auto I = NameHierarchy.find(Names); I != NameHierarchy.end())
-        Map.try_emplace(I->second, S);
+      if (auto I = NameHierarchy.find(Names); I != NameHierarchy.end()) {
+        auto ParserUnit{Parent.kind() == semantics::Scope::Kind::MainProgram
+                            ? Collector.getMainParserUnit()
+                            : Collector.findParserUnit(S)};
+        assert(ParserUnit &&
+               "Representation of a program unit in AST must be known!");
+        Map.try_emplace(I->second, ParserUnit, S);
+      }
     for (auto &Child : Parent.children())
-      match(Child, Names, NameHierarchy, Map);
+      match(Child, Names, NameHierarchy, Collector, Map);
     Names.pop_back();
   }
 }
@@ -82,9 +177,11 @@ void FlangTransformationContext::initialize(
   assert(hasInstance() && "Transformation context is not configured!");
   NameHierarchyMapT NameHierarchy;
   collect(M, CU, NameHierarchy);
+  ProgramUnitCollector V;
+  parser::Walk(mParsing->parseTree(), V);
   for (auto &Child : mContext->globalScope().children()) {
     NameHierarchyMapT::key_type Names;
-    match(Child, Names, NameHierarchy, mGlobals);
+    match(Child, Names, NameHierarchy, V, mGlobals);
   }
   mRewriter = std::make_unique<FlangRewriter>(mParsing->cooked(),
                                               mParsing->allCooked());
