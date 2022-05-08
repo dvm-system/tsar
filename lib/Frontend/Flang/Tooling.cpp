@@ -153,6 +153,9 @@ int FlangTool::run(FlangFrontendActionFactory *Factory) {
         llvm::cl::ParseCommandLineOptions(NumArgs + 2, Args.get());
       }
       if (Success) {
+        Flang->getInvocation()
+            .getFrontendOpts()
+            .needProvenanceRangeToCharBlockMappings = true;
         auto Action{Factory->create()};
         Action->setWorkingDir(CompileCommand.Directory);
         Success = Flang->executeAction(*Action);
