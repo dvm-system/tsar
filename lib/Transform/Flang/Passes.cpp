@@ -29,4 +29,5 @@ using namespace llvm;
 
 void llvm::initializeFlangTransform(PassRegistry &Registry) {
   initializeFlangConstantReplacementPassPass(Registry);
+  initializeFlangVariableRegistrationPassPass(Registry);
 }

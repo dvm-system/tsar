@@ -43,6 +43,12 @@ void initializeFlangConstantReplacementPassPass(PassRegistry &Registry);
 /// Create a pass to replace constants with variables with values equal
 /// to the replaced constants.
 FunctionPass *createFlangConstantReplacementPass();
+
+/// Initialize a pass to register all varaiables in a program unit.
+void initializeFlangVariableRegistrationPassPass(PassRegistry &Registry);
+
+/// Create a pass to register all varaiables in a program unit.
+FunctionPass *createFlangVariableRegistrationPass();
 } // namespace llvm
 
 #endif//TSAR_FLANG_TRANSFORM_PASSES_H

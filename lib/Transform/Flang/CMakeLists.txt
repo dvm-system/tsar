@@ -1,4 +1,5 @@
-set(TRANSFORM_SOURCES Passes.cpp Format.cpp ConstantReplacement.cpp)
+set(TRANSFORM_SOURCES Passes.cpp Format.cpp ConstantReplacement.cpp
+  VariableRegistration.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
