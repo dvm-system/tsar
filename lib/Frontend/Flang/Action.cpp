@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <flang/Optimizer/Support/InitFIR.h>
+#include "tsar/ADT/DenseMapTraits.h"
 #include "tsar/Frontend/Flang/Action.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Flang/TransformationContext.h"
@@ -31,12 +32,16 @@
 #include <flang/Frontend/CompilerInstance.h>
 #include <flang/Lower/Bridge.h>
 #include <flang/Lower/Support/Verifier.h>
+#include <flang/Parser/parse-tree-visitor.h>
+#include <flang/Semantics/scope.h>
 #include <flang/Optimizer/Support/Utils.h>
 #include <mlir/IR/Dialect.h>
 #include <mlir/Pass/PassManager.h>
 #include <llvm/ADT/IntrusiveRefCntPtr.h>
 #include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+#include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Metadata.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/Timer.h>
@@ -113,9 +118,8 @@ bool tsar::FlangMainAction::shouldEraseOutputFiles() {
 }
 
 namespace {
-struct DICompileUnitReplacer {
-  DICompileUnitReplacer(DICompileUnit *From, DICompileUnit *To) :
-    From(From), To(To) {}
+struct DINodeReplacer {
+  DINodeReplacer(DINode *From, DINode *To) : From(From), To(To) {}
 
   void visitMDNode(MDNode &MD) {
     if (!MDNodes.insert(&MD).second)
@@ -124,7 +128,7 @@ struct DICompileUnitReplacer {
       auto &Op{MD.getOperand(I)};
       if (!Op.get())
         continue;
-      if (auto *CU{dyn_cast<DICompileUnit>(Op)}; CU && CU == From)
+      if (Op == From)
         MD.replaceOperandWith(I, To);
       if (auto *N = dyn_cast<MDNode>(Op)) {
         visitMDNode(*N);
@@ -134,8 +138,232 @@ struct DICompileUnitReplacer {
   }
 
   SmallPtrSet<const Metadata *, 32> MDNodes;
-  DICompileUnit *From;
-  DICompileUnit *To;
+  DINode *From;
+  DINode *To;
+};
+
+class ProgramUnitCollector {
+public:
+  using LineToSubprogramMap =
+      DenseMap<int, std::tuple<DISubprogram *, Function *>, DenseMapInfo<int>,
+               TaggedDenseMapTuple<bcl::tagged<int, int>,
+                                   bcl::tagged<DISubprogram *, DISubprogram>,
+                                   bcl::tagged<Function *, Function>>>;
+
+  explicit ProgramUnitCollector(const parser::AllCookedSources &AllCooked,
+                                LineToSubprogramMap &LineToSubprogram,
+                                LLVMContext &Ctx, DIScope &Scope)
+      : mAllCooked(AllCooked), mLineToSubprogram(LineToSubprogram), mCtx(Ctx) {
+    mScopeStack.push_back(&Scope);
+  }
+
+  template <typename T> bool Pre(T &N) { return true; }
+  template <typename T> void Post(T &N) {}
+
+  bool Pre(parser::ProgramUnit &PU) {
+    return std::visit(
+        common::visitors{
+            [](auto &) { return false; },
+            [this](common::Indirection<parser::MainProgram> &X) {
+              if (const auto &S{std::get<
+                      std::optional<parser::Statement<parser::ProgramStmt>>>(
+                      X.value().t)})
+                return preUnitStatement(*S);
+              mInUnnamedProgram = true;
+              return true;
+            },
+            [this](common::Indirection<parser::FunctionSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
+                  X.value().t)};
+              return preUnitStatement(S);
+            },
+            [this](common::Indirection<parser::SubroutineSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
+                  X.value().t)};
+              return preUnitStatement(S);
+            },
+            [this](common::Indirection<parser::Module> &X) {
+              const auto &S{
+                  std::get<parser::Statement<parser::ModuleStmt>>(X.value().t)};
+              const auto &Name{S.statement.v.symbol->name()};
+              auto Range{mAllCooked.GetSourcePositionRange(S.source)};
+              auto *Scope{mScopeStack.back()};
+              auto DIM{DIModule::get(
+                  Scope->getContext(), Scope->getFile(), Scope,
+                  MDString::get(Scope->getContext(), Name.ToString()), nullptr,
+                  nullptr, nullptr, Range ? Range->first.line : 0)};
+              mScopeStack.push_back(DIM);
+              return true;
+            }},
+        PU.u);
+  }
+
+  bool Pre(parser::InternalSubprogram &IS) {
+    return std::visit(
+        common::visitors{
+            [](auto &) { return false; },
+            [this](common::Indirection<parser::FunctionSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
+                  X.value().t)};
+              return preUnitStatement(S);
+            },
+            [this](common::Indirection<parser::SubroutineSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
+                  X.value().t)};
+              return preUnitStatement(S);
+            }},
+        IS.u);
+  }
+
+  bool Pre(parser::ModuleSubprogram &MS) {
+    return std::visit(
+        common::visitors{
+            [](auto &) { return false; },
+            [this](common::Indirection<parser::FunctionSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::FunctionStmt>>(
+                  X.value().t)};
+              return preUnitStatement(S);
+            },
+            [this](common::Indirection<parser::SubroutineSubprogram> &X) {
+              const auto &S{std::get<parser::Statement<parser::SubroutineStmt>>(
+                  X.value().t)};
+              return preUnitStatement(S);
+            }},
+        MS.u);
+  }
+
+  void Post(parser::ProgramUnit &PU) { mScopeStack.pop_back(); }
+  void Post(parser::InternalSubprogram &) { mScopeStack.pop_back(); }
+  void Post(parser::ModuleSubprogram &) { mScopeStack.pop_back(); }
+
+  bool Pre(parser::InternalSubprogramPart &ISP) {
+    if (mInUnnamedProgram)
+      mDeferredMainSubprograms = &ISP;
+    return !mInUnnamedProgram;
+  }
+
+  template <typename T> bool Pre(parser::Statement<T> &S) {
+    if (mInUnnamedProgram) {
+      if (auto Range{mAllCooked.GetSourcePositionRange(S.source)})
+        if (auto LToSItr{mLineToSubprogram.find(Range->first.line)};
+            LToSItr != mLineToSubprogram.end() &&
+            LToSItr->template get<DISubprogram>()) {
+          markAsMain(LToSItr);
+          LToSItr->template get<DISubprogram>()->replaceOperandWith(
+              1, mScopeStack.back());
+          assert(LToSItr->template get<DISubprogram>()->getScope() ==
+                     mScopeStack.back() &&
+                 "Corrupted metadata!");
+          LToSItr->template get<DISubprogram>()->replaceOperandWith(
+              2, MDString::get(mCtx,
+                               FlangTransformationContext::UnnamedProgramStub));
+          assert(LToSItr->template get<DISubprogram>()->getName() ==
+                     FlangTransformationContext::UnnamedProgramStub &&
+                 "Corrupted metadata!");
+          mScopeStack.push_back(LToSItr->template get<DISubprogram>());
+          mDIMainProgram = LToSItr->template get<DISubprogram>();
+          // If we haven't processed internal subprograms in the main program
+          // yet, it's not necessary to defer the processing, because we
+          // already known DIScope for the main program.
+          // If there is no executable constracts in the unnamed main program,
+          // it's line in a metadata corresponds to the end statement, so
+          // we have already deferred processing of internal subprograms.
+          mInUnnamedProgram = false;
+          return false;
+        }
+    }
+    return true;
+  }
+
+  parser::InternalSubprogramPart * getDeferredSubprograms() noexcept {
+    return mDeferredMainSubprograms;
+  }
+
+  DISubprogram * getDIMainProgram() noexcept { return mDIMainProgram; }
+
+private:
+  template <typename T> bool preUnitStatement(const T &S) {
+    if (auto Range{mAllCooked.GetSourcePositionRange(S.source)})
+      if (auto LToSItr{mLineToSubprogram.find(Range->first.line)};
+          LToSItr != mLineToSubprogram.end() &&
+          LToSItr->template get<DISubprogram>()) {
+        LToSItr->template get<DISubprogram>()->replaceOperandWith(
+            1, mScopeStack.back());
+        assert(LToSItr->template get<DISubprogram>()->getScope() ==
+                   mScopeStack.back() &&
+               "Corrupted metadata!");
+        if constexpr (std::is_same_v<T,
+                                     parser::Statement<parser::ProgramStmt>>) {
+          markAsMain(LToSItr);
+          LToSItr->template get<DISubprogram>()->replaceOperandWith(
+              2, MDString::get(mCtx, S.statement.v.symbol->name().ToString()));
+          assert(LToSItr->template get<DISubprogram>()->getName() ==
+                     S.statement.v.symbol->name().ToString() &&
+                 "Corrupted metadata!");
+          mDIMainProgram = LToSItr->template get<DISubprogram>();
+        } else {
+          const auto &Name{std::get<parser::Name>(S.statement.t)};
+          LToSItr->template get<DISubprogram>()->replaceOperandWith(
+              2, MDString::get(mCtx, Name.symbol->name().ToString()));
+          assert(LToSItr->template get<DISubprogram>()->getName() ==
+                     Name.symbol->name().ToString() &&
+                 "Corrupted metadata!");
+        }
+        mScopeStack.push_back(LToSItr->template get<DISubprogram>());
+        return true;
+      }
+    return false;
+  }
+
+  /// Set SPFlagMainSubprogram for main program unit.
+  void markAsMain(const LineToSubprogramMap::iterator &LToSItr) {
+    assert(LToSItr != mLineToSubprogram.end() && "Subprogram must be known!");
+    auto NewDISub{DISubprogram::getDistinct(
+        LToSItr->get<DISubprogram>()->getContext(),
+        LToSItr->get<DISubprogram>()->getScope(),
+        LToSItr->get<DISubprogram>()->getName(),
+        LToSItr->get<DISubprogram>()->getLinkageName(),
+        LToSItr->get<DISubprogram>()->getFile(),
+        LToSItr->get<DISubprogram>()->getLine(),
+        LToSItr->get<DISubprogram>()->getType(),
+        LToSItr->get<DISubprogram>()->getScopeLine(),
+        LToSItr->get<DISubprogram>()->getContainingType(),
+        LToSItr->get<DISubprogram>()->getVirtualIndex(),
+        LToSItr->get<DISubprogram>()->getThisAdjustment(),
+        LToSItr->get<DISubprogram>()->getFlags(),
+        LToSItr->get<DISubprogram>()->getSPFlags() |
+            DISubprogram::SPFlagMainSubprogram,
+        LToSItr->get<DISubprogram>()->getUnit(),
+        LToSItr->get<DISubprogram>()->getTemplateParams(),
+        LToSItr->get<DISubprogram>()->getDeclaration(),
+        LToSItr->get<DISubprogram>()->getRetainedNodes(),
+        LToSItr->get<DISubprogram>()->getThrownTypes(),
+        LToSItr->get<DISubprogram>()->getAnnotations(),
+        LToSItr->get<DISubprogram>()->getTargetFuncName())};
+    DINodeReplacer R{LToSItr->get<DISubprogram>(), NewDISub};
+    SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
+    LToSItr->get<Function>()->getAllMetadata(MDs);
+    for (auto &I : instructions(LToSItr->get<Function>())) {
+      if (auto &Loc {I.getDebugLoc()})
+        MDs.emplace_back(0, Loc.get());
+      if (auto *MD{I.getMetadata(LLVMContext::MD_loop)})
+        for (unsigned I = 1; I < MD->getNumOperands(); ++I)
+          if (auto *Loc{dyn_cast_or_null<DILocation>(MD->getOperand(I))})
+            MDs.emplace_back(0, Loc);
+    }
+    for (auto &MD : MDs)
+      R.visitMDNode(*MD.second);
+    LToSItr->get<Function>()->setSubprogram(NewDISub);
+    LToSItr->get<DISubprogram>() = NewDISub;
+  }
+
+  const Fortran::parser::AllCookedSources &mAllCooked;
+  LineToSubprogramMap &mLineToSubprogram;
+  LLVMContext &mCtx;
+  SmallVector<DIScope *, 4> mScopeStack;
+  parser::InternalSubprogramPart *mDeferredMainSubprograms{nullptr};
+  DISubprogram *mDIMainProgram{nullptr};
+  bool mInUnnamedProgram{false};
 };
 }
 
@@ -172,7 +400,7 @@ void tsar::FlangMainAction::executeAction() {
           CU->getDebugInfoForProfiling(), CU->getNameTableKind(),
           CU->getRangesBaseAddress(), CU->getSysRoot(), CU->getSDK())};
       llvmModule->setSourceFileName(Filename);
-      DICompileUnitReplacer R{CU, NewDICU};
+      DINodeReplacer R{CU, NewDICU};
       for (auto &F : *llvmModule) {
         SmallVector<std::pair<unsigned, MDNode *>, 1> MDs;
         F.getAllMetadata(MDs);
@@ -180,6 +408,26 @@ void tsar::FlangMainAction::executeAction() {
           R.visitMDNode(*MD.second);
       }
       CUs->setOperand(0, NewDICU);
+      CU = NewDICU;
+    }
+    ProgramUnitCollector::LineToSubprogramMap LineToSubprogram;
+    for (auto &F:*llvmModule) {
+      if (auto *DISub{F.getSubprogram()}) {
+        auto [I, IsNew] =
+            LineToSubprogram.try_emplace(DISub->getLine(), DISub, &F);
+        if (!IsNew) {
+          I->get<DISubprogram>() = nullptr;
+        }
+      }
+    }
+    ProgramUnitCollector V{CI.getParsing().allCooked(), LineToSubprogram,
+                           llvmModule->getContext(), *CU};
+    parser::Walk(CI.getParsing().parseTree(), V);
+    if (V.getDeferredSubprograms() && V.getDIMainProgram()) {
+      ProgramUnitCollector DeferredV{CI.getParsing().allCooked(),
+                                     LineToSubprogram, llvmModule->getContext(),
+                                     *V.getDIMainProgram()};
+      parser::Walk(*V.getDeferredSubprograms(), DeferredV);
     }
     IntrusiveRefCntPtr<TransformationContextBase> TfmCtx{
         new FlangTransformationContext{

@@ -45,6 +45,8 @@ public:
     return Ctx->getKind() == TC_Flang;
   }
 
+  static constexpr llvm::StringRef UnnamedProgramStub{""};
+
   FlangTransformationContext(Fortran::parser::Parsing &Parsing,
                              Fortran::parser::Options &Options,
                              Fortran::semantics::SemanticsContext &Context,

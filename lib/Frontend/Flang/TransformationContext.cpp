@@ -43,7 +43,10 @@ void collect(const Module &M, const DICompileUnit &CU,
       NameHierarchyMapT::key_type Key;
       DIScope *Scope{DISub};
       do {
-        if (Scope->getName().empty())
+        if (Scope->getName().empty() &&
+            (!FlangTransformationContext::UnnamedProgramStub.empty() ||
+             !isa<DISubprogram>(Scope) ||
+             !cast<DISubprogram>(Scope)->isMainSubprogram()))
           break;
         Key.push_back(std::string{Scope->getName()});
         Scope = Scope->getScope();
@@ -59,7 +62,10 @@ void collect(const Module &M, const DICompileUnit &CU,
 void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
     const NameHierarchyMapT &NameHierarchy, MangledToSourceMapT &Map) {
   if (auto *S{Parent.symbol()}) {
-    Names.push_back(S->name().ToString());
+    Names.push_back((Parent.kind() != semantics::Scope::Kind::MainProgram ||
+                     !S->name().empty())
+                        ? S->name().ToString()
+                        : FlangTransformationContext::UnnamedProgramStub.str());
     if (Parent.kind() == semantics::Scope::Kind::Subprogram ||
         Parent.kind() == semantics::Scope::Kind::MainProgram)
       if (auto I = NameHierarchy.find(Names); I != NameHierarchy.end())
