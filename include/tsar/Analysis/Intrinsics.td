@@ -127,3 +127,7 @@ def allocate_pool : Intrinsic<"sapforAllocatePool",
 def decl_types : Intrinsic<"sapforDeclTypes", 
                         tsar_void_ty,
                         [tsar_size_ty, tsar_size_ptr_ty, tsar_size_ptr_ty]>;
+
+def ast_reg_var : Intrinsic<"sapforASTRegVar",
+                        tsar_void_ty,
+                        [tsar_addr_ty]>;

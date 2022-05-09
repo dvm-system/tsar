@@ -32,4 +32,5 @@ void llvm::initializeMixedTransform(PassRegistry &Registry) {
   initializeDILoopRetrieverPassPass(Registry);
   initializeDINodeRetrieverPassPass(Registry);
   initializeFlangDummyAliasAnalysisPass(Registry);
+  initializeFlangDIVariableRetrieverPassPass(Registry);
 }

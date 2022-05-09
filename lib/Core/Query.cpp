@@ -139,6 +139,7 @@ void addInitialTransformations(legacy::PassManager &Passes) {
   Passes.add(createStripDeadPrototypesPass());
   Passes.add(createGlobalDCEPass());
   Passes.add(createGlobalsAAWrapperPass());
+  Passes.add(createFlangDIVariableRetrieverPass());
   Passes.add(createNoMetadataDSEPass());
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createDINodeRetrieverPass());
@@ -398,6 +399,7 @@ void InstrLLVMQueryManager::run(llvm::Module *M,
   }
   Passes.add(createUnreachableBlockEliminationPass());
   Passes.add(createNoMetadataDSEPass());
+  Passes.add(createFlangDIVariableRetrieverPass());
   Passes.add(createDINodeRetrieverPass());
   Passes.add(createMemoryMatcherPass());
   Passes.add(createDILoopRetrieverPass());

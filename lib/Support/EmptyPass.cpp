@@ -28,4 +28,9 @@
 using namespace llvm;
 
 char EmptyFunctionPass::ID = 0;
-INITIALIZE_PASS(EmptyFunctionPass, "empty-pass", "Empty Pass", true, true)
+INITIALIZE_PASS(EmptyFunctionPass, "empty-function-pass", "Empty Function Pass",
+                true, true)
+
+char EmptyModulePass::ID = 0;
+INITIALIZE_PASS(EmptyModulePass, "empty-module-pass", "Empty Module Pass", true,
+                true)
