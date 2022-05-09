@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "tsar/Analysis/Intrinsics.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Flang/TransformationContext.h"
@@ -140,7 +141,7 @@ bool FlangVariableRegistrationPass::runOnFunction(Function &F) {
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto ASTSub{TfmCtx->getDeclForMangledName(F.getName())};
-  if (!ASTSub)
+  if (!ASTSub || ASTSub.isDeclaration())
     return false;
   if (ASTSub.getSemanticsUnit()->scope()->GetSymbols().empty())
     return false;
@@ -164,7 +165,9 @@ bool FlangVariableRegistrationPass::runOnFunction(Function &F) {
       }
       if (TfmCtx->getOptions().isFixedForm)
         Register.append(6, ' ');
-      Register += "call sapfor_dbg_variable(" + S->name().ToString() + ")";
+      Register += ("call " + getName(IntrinsicId::ast_reg_var) + "(" +
+                   S->name().ToString() + ")")
+                      .str();
       if (!TfmCtx->getOptions().isFixedForm)
         Register += ";";
       Register += "\n";

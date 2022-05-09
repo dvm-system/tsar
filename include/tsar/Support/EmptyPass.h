@@ -42,6 +42,19 @@ public:
 };
 
 inline FunctionPass *createEmptyFunctionPass() { return new EmptyFunctionPass; }
+
+void initializeEmptyModulePassPass(PassRegistry &);
+
+class EmptyModulePass : public ModulePass, private bcl::Uncopyable {
+public:
+  static char ID;
+  EmptyModulePass() : ModulePass(ID) {
+    initializeEmptyModulePassPass(*PassRegistry::getPassRegistry());
+  }
+  bool runOnModule(Module &) override { return false; }
+};
+
+inline ModulePass *createEmptyModulePass() { return new EmptyModulePass; }
 }
 #endif//TSAR_EMPTY_PASS_H
 

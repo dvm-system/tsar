@@ -32,3 +32,8 @@ void llvm::initializeFlangDummyAliasAnalysisPass(PassRegistry &) {}
 FunctionPass *llvm::createFlangDummyAliasAnalysis() {
   return createEmptyFunctionPass();
 }
+
+void llvm::initializeFlangDIVariableRetrieverPassPass(PassRegistry &) {}
+ModulePass *llvm::createFlangDIVariableRetrieverPass() {
+  return createEmptyModulePass();
+}

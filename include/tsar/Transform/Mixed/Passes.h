@@ -70,5 +70,13 @@ void initializeFlangDummyAliasAnalysisPass(PassRegistry &Registry);
 /// Create a pass which retrieves alias information for dummy arguments from
 /// the source code.
 FunctionPass *createFlangDummyAliasAnalysis();
+
+/// Initialize a pass which retrieves metadata for Fortran
+/// variables if it is not presented properly in LLVM IR.
+void initializeFlangDIVariableRetrieverPassPass(PassRegistry &Registry);
+
+/// Create a pass which retrieves metadata for Fortran
+/// variables if it is not presented properly in LLVM IR.
+ModulePass *createFlangDIVariableRetrieverPass();
 }
 #endif//TSAR_MIXED_TRANSFORM_PASSES_H

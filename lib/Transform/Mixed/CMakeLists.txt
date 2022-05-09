@@ -2,7 +2,8 @@ set(TRANSFORM_SOURCES Passes.cpp Instrumentation.cpp DILoopRetriever.cpp
   DINodeRetriever.cpp)
 
 if(FLANG_FOUND)
-  set(TRANSFORM_SOURCES ${TRANSFORM_SOURCES} DummyScopeAAPass.cpp)
+  set(TRANSFORM_SOURCES ${TRANSFORM_SOURCES} DummyScopeAAPass.cpp
+    DIVariableRetriever.cpp)
 else()
   set(TRANSFORM_SOURCES ${TRANSFORM_SOURCES} FlangStubs.cpp)
 endif()
