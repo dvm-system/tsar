@@ -140,7 +140,8 @@ def LoopInterchange : Clause<"interchange", Transform,
   [LParen, PPIdentifier, Comma, PPIdentifier, RParen]>;
 
 def RemoveRedarray : Clause<"remove_redarray", Transform,
-  [LParen, Identifier, Comma, NumericConstant, RParen]>;
+  [LParen, Identifier, LSquare, NumericConstant, RSquare, 
+  ZeroOrMore<[Comma, Identifier, LSquare, NumericConstant, RSquare]>, RParen]>;
 
 def Replace : Clause<"replace", Transform,
   [ZeroOrOne<[LParen, Identifier, ZeroOrMore<[Comma, Identifier]>, RParen]>]>;

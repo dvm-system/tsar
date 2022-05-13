@@ -62,8 +62,6 @@
 using namespace llvm;
 using namespace tsar;
 
-#define LLVM_DEBUG(X) X
-
 #undef DEBUG_TYPE
 #define DEBUG_TYPE "clang-remove-redarray"
 #define DEBUG_PREFIX "[REMOVE REDARRAY]: "
@@ -90,7 +88,6 @@ class ClangRemoveRedarrayInfo final : public tsar::PassGroupInfo {
 
 void ClangRemoveRedarrayInfo::addBeforePass(
     legacy::PassManager &Passes) const {
-	dbgs() << DEBUG_PREFIX << "launch before_pass remove_redarray\n";
   addImmutableAliasAnalysis(Passes);
   addInitialTransformations(Passes);
   Passes.add(createAnalysisSocketImmutableStorage());
@@ -111,7 +108,6 @@ void ClangRemoveRedarrayInfo::addAfterPass(legacy::PassManager &Passes) const {
 }
 
 void ClangRemoveRedarray::getAnalysisUsage(AnalysisUsage &AU) const {
-	dbgs() << DEBUG_PREFIX << "launch getAnalysisUsage remove_redarray\n";
   AU.addRequired<CanonicalLoopPass>();
   AU.addRequired<ClangDIMemoryMatcherPass>();
   AU.addRequired<ClangPerfectLoopPass>();
@@ -124,7 +120,6 @@ void ClangRemoveRedarray::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TargetLibraryInfoWrapperPass>();
   AU.addRequired<TransformationEnginePass>();
   //AU.setPreservesAll();
-  dbgs() << DEBUG_PREFIX << "end getAnalysisUsage remove_redarray\n";
 }
 
 char ClangRemoveRedarray::ID = 0;
@@ -153,8 +148,10 @@ class RedarrayClauseVisitor
     : public clang::RecursiveASTVisitor<RedarrayClauseVisitor> {
 public:
   explicit RedarrayClauseVisitor(
-      SmallVectorImpl<std::tuple<std::string, clang::Stmt *>> &Ls)
-      : mLiterals(Ls) {}
+      SmallVectorImpl<std::tuple<std::string, clang::Stmt *>> &Ls,
+      std::vector<std::tuple<std::string, clang::DeclRefExpr*>> &decls,
+      std::vector<std::tuple<std::string, clang::IntegerLiteral*>> &sizes)
+      : mLiterals(Ls), mDecls(decls), mSizes(sizes) {}
   bool VisitStringLiteral(clang::StringLiteral *SL) {
       LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "visit string literal RedarrayClauseVisitor, string: " << SL->getString() << "\n");
     if (SL->getString() != getName(ClauseId::RemoveRedarray))
@@ -164,11 +161,13 @@ public:
   bool VisitDeclRefExpr(clang::DeclRefExpr* DE) {
     LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "visit decl ref expr RedarrayClauseVisitor, found: " << DE->getNameInfo().getAsString() << "\n");
     mLiterals.emplace_back(DE->getNameInfo().getAsString(), DE);
+    mDecls.emplace_back(DE->getNameInfo().getAsString(), DE);
     return true;
   }
   bool VisitIntegerLiteral(clang::IntegerLiteral* DE) {
       LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "visit IntegerLiteral RedarrayClauseVisitor\n");
       mLiterals.emplace_back("", DE);
+      mSizes.emplace_back("", DE);
       return true;
   }
 
@@ -176,6 +175,8 @@ public:
 
 private:
   SmallVectorImpl<std::tuple<std::string, clang::Stmt *>> &mLiterals;
+  std::vector<std::tuple<std::string, clang::DeclRefExpr*>> &mDecls;
+  std::vector<std::tuple<std::string, clang::IntegerLiteral*>> &mSizes;
   clang::Stmt *mClause{nullptr};
 };
 
@@ -256,6 +257,12 @@ public:
     return RecursiveASTVisitor::TraverseUnaryOperator(U);
   }
 
+  std::string addSuffix(std::string prefix) {
+      int i = 0;
+      while (mRawInfo.Identifiers.count(prefix + std::to_string(i)) > 0) { i++; }
+      return prefix + std::to_string(i);
+  }
+
   bool TraverseStmt(clang::Stmt *S) {
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
@@ -266,7 +273,7 @@ public:
       if (!findClause(P, ClauseId::RemoveRedarray, Clauses))
         return RecursiveASTVisitor::TraverseStmt(S);
       LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "found remove_redarray clause\n");
-      RedarrayClauseVisitor SCV{mSwaps};
+      RedarrayClauseVisitor SCV{mSwaps, mDecls, mSizes};
       for (auto *C : Clauses) {
         SCV.setClause(C);
         SCV.TraverseStmt(C);
@@ -319,31 +326,52 @@ public:
         resetVisitor();
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-      auto [ArrName, ArrayStmt] = mSwaps[0];
-      auto [SizeLiteral, SizeStmt] = mSwaps[1];
-      std::string OldArrName = ArrName;
-      ArrName += "_subscr_";
-      std::string ToInsert = cast<clang::DeclRefExpr>(ArrayStmt)->getType().getAsString();
-      ToInsert.erase(ToInsert.find('['), ToInsert.find(']'));
-      for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
-        if (i > 0) {
-          ToInsert += ",";
-        }
-        ToInsert += (" " + ArrName + std::to_string(i));
+      if (mDecls.size() != mSizes.size()) {
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "number of arrays does not match number of their sizes\n");
+          return false;
       }
-      ToInsert += (";\n");
-      mRewriter.InsertTextBefore(S->getBeginLoc(),
-                                ToInsert); // insert array variables
-                                                      // definitions here
+      for (int i = 0; i < mDecls.size(); i++) {
+          auto [ArrName, ArrayStmt] = mDecls[i];
+          auto [SizeLiteral, SizeStmt] = mSizes[i];
+          const clang::Type* ArrayType = cast<clang::DeclRefExpr>(ArrayStmt)->getType().getTypePtr();
+          if (!isa<clang::ArrayType>(ArrayType) && !isa<clang::PointerType>(ArrayType)) {
+              LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "statement in the pragma is not array or pointer\n");
+              return false;
+          }
+          std::string ToInsert;
+          if (isa<clang::ArrayType>(ArrayType)) {
+              ToInsert = cast<clang::ArrayType>(ArrayType)->getElementType().getAsString();
+          }
+          else if (isa<clang::PointerType>(ArrayType)) {
+              ToInsert = cast<clang::PointerType>(ArrayType)->getPointeeType().getAsString();
+          }
+          arrayVarNames[ArrName] = std::vector<std::string>();
+          for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
+              if (i > 0) {
+                  ToInsert += ",";
+              }
+              std::string newVarName = addSuffix(ArrName + "_subscr_" + std::to_string(i) + "_");
+              arrayVarNames[ArrName].push_back(newVarName);
+              ToInsert += (" " + newVarName + " = " + ArrName + "[" + std::to_string(i) + "]");
+          }
+          ToInsert += (";\n");
+          mRewriter.InsertTextBefore(S->getBeginLoc(),
+              ToInsert); // insert array variables
+                                    // definitions here
+      }
       mStatus = FIND_INDEX;
       auto Res = RecursiveASTVisitor::TraverseStmt(S);
       mStatus = FIND_OP;
       Res = RecursiveASTVisitor::TraverseStmt(S);
-      ToInsert = "";
-      for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
-          ToInsert += OldArrName + "[" + std::to_string(i) + "] = " + ArrName + std::to_string(i) + ";\n";
+      for (int i = 0; i < mDecls.size(); i++) {
+          auto [ArrName, ArrayStmt] = mDecls[i];
+          auto [SizeLiteral, SizeStmt] = mSizes[i];
+          std::string ToInsert = "";
+          for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
+              ToInsert += ArrName + "[" + std::to_string(i) + "] = " + arrayVarNames[ArrName][i] + ";\n";
+          }
+          mRewriter.InsertTextAfterToken(S->getEndLoc(), ToInsert);
       }
-      mRewriter.InsertTextAfterToken(S->getEndLoc(), ToInsert);
       return true;
 
     }
@@ -357,23 +385,56 @@ public:
       mStatus = GET_ALL_ARRAY_SUBSCRIPTS;
       if (isa<clang::BinaryOperator>(S)) {
         auto Res = RecursiveASTVisitor::TraverseBinaryOperator(cast<clang::BinaryOperator>(S));
-      } else {
+      } else if (isa<clang::UnaryOperator>(S)) {
         auto Res = RecursiveASTVisitor::TraverseUnaryOperator(cast<clang::UnaryOperator>(S));
+      }
+      else {
+          LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "unsupported operator\n");
+          return false;
       }
       mStatus = FIND_OP;
       if (mArraySubscriptExpr.size() == 0) {
         return RecursiveASTVisitor::TraverseStmt(S);
       }
-      auto [SizeLiteral, SizeStmt] = mSwaps[1];
-      auto IndexName = mIndex->getName();
-      std::string switchText = "switch (" + IndexName.str() + ") {\n";
+      int declIndex = -1;
+      for (int i = 0; i < mDecls.size(); i++) {
+          auto [SizeLiteral, SizeStmt] = mSizes[i];
+          auto [ArrName, ArrayStmt] = mDecls[i];
+          if (mRewriter.getRewrittenText(mArraySubscriptExpr[0]->getLHS()->getSourceRange()) == ArrName) {
+              declIndex = i;
+          }
+      }
+      if (declIndex == -1) {
+          return RecursiveASTVisitor::TraverseStmt(S);
+      }
+      for (int j = 1; j < mArraySubscriptExpr.size(); j++) {
+          if (mRewriter.getRewrittenText(mArraySubscriptExpr[j]->getLHS()->getSourceRange()) !=
+              mRewriter.getRewrittenText(mArraySubscriptExpr[0]->getLHS()->getSourceRange())) {
+              bool arrayJInPragma = false;
+              bool array0InPragma = false;
+              for (int i = 0; i < mDecls.size(); i++) {
+                  auto [ArrName, ArrayStmt] = mDecls[i];
+                  if (ArrName == mRewriter.getRewrittenText(mArraySubscriptExpr[0]->getLHS()->getSourceRange())) {
+                      array0InPragma = true;
+                  }
+                  if (ArrName == mRewriter.getRewrittenText(mArraySubscriptExpr[j]->getLHS()->getSourceRange())) {
+                      arrayJInPragma = true;
+                  }
+              }
+              if (arrayJInPragma && array0InPragma) {
+                  LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "different arrays in operator are not yet supported\n");
+                  return false;
+              }
+          }
+      }
+      auto [ArrName, ArrayStmt] = mDecls[declIndex];
+      auto [SizeLiteral, SizeStmt] = mSizes[declIndex];
+      std::string switchText = "switch (" + mRewriter.getRewrittenText(mArraySubscriptExpr[0]->getRHS()->getSourceRange()) + ") {\n";
       for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
         ExternalRewriter Canvas(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()), mSrcMgr, mLangOpts);
         auto ArrSize = cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue();
-        auto [ArrName, ArrayStmt] = mSwaps[0];
-        ArrName += "_subscr_";
         for (auto Subscr: mArraySubscriptExpr) {
-          Canvas.ReplaceText(clang::SourceRange(Subscr->getBeginLoc(), Subscr->getEndLoc()), ArrName + std::to_string(i));
+          Canvas.ReplaceText(clang::SourceRange(Subscr->getBeginLoc(), Subscr->getEndLoc()), arrayVarNames[ArrName][i]);
         }
         std::string caseBody = Canvas.getRewrittenText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc())).str();
         switchText += "case " + std::to_string(i) + ":\n" + caseBody + ";\nbreak;\n";
@@ -401,10 +462,12 @@ public:
         return RecursiveASTVisitor::TraverseStmt(S);
       }
       auto Arr = cast<clang::DeclRefExpr>(S);
-      auto [ArrName, ArrayStmt] = mSwaps[0];
-      if (ArrName == Arr->getNameInfo().getName().getAsString()) {
-        mIsSubscriptUseful = true;
-        return true;
+      for (int i = 0; i < mDecls.size(); i++) {
+          auto [ArrName, ArrayStmt] = mDecls[i];
+          if (ArrName == Arr->getNameInfo().getName().getAsString()) {
+              mIsSubscriptUseful = true;
+              return true;
+          }
       }
       return RecursiveASTVisitor::TraverseStmt(S);
     }
@@ -417,7 +480,10 @@ private:
   void resetVisitor() {
     mStatus = SEARCH_PRAGMA;
     mSwaps.clear();
+    mDecls.clear();
+    mSizes.clear();
     mInductions.clear();
+    arrayVarNames.clear();
   }
 
   void clearArraySubscr() {
@@ -451,6 +517,9 @@ private:
     CHECK_SUBSCRIPT,
   } mStatus{SEARCH_PRAGMA};
   SmallVector<std::tuple<std::string, clang::Stmt *>, 4> mSwaps;
+  std::vector<std::tuple<std::string, clang::DeclRefExpr*>> mDecls;
+  std::vector<std::tuple<std::string, clang::IntegerLiteral*>> mSizes;
+  std::map<std::string, std::vector<std::string> > arrayVarNames;
   std::vector<clang::ArraySubscriptExpr *> mArraySubscriptExpr;
   bool mIsSubscriptUseful;
   clang::VarDecl* mIndex;
@@ -461,37 +530,28 @@ private:
 
 bool ClangRemoveRedarray::runOnFunction(Function &F) {
 
-	dbgs() << DEBUG_PREFIX << "launch runOnFunction remove_redarray\n";
-
   auto *DISub{findMetadata(&F)};
   if (!DISub)
     return false;
-  dbgs() << DEBUG_PREFIX << "DISub initialized runOnFunction remove_redarray\n";
   auto *CU{DISub->getUnit()};
   if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return false;
-  dbgs() << DEBUG_PREFIX << "getSourceLanguage runOnFunction remove_redarray\n";
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
-  dbgs() << DEBUG_PREFIX << "getAnalysis runOnFunction remove_redarray\n";
   auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                              TfmInfo->getContext(*CU))
                        : nullptr};
-  dbgs() << DEBUG_PREFIX << "TfmInfo ClangTransformationContext runOnFunction remove_redarray\n";
   if (!TfmCtx || !TfmCtx->hasInstance()) {
     F.getContext().emitError("can not transform sources"
                               ": transformation context is not available");
     return false;
   }
-  dbgs() << DEBUG_PREFIX << "TfmCtx runOnFunction remove_redarray\n";
   auto *FD{TfmCtx->getDeclForMangledName(F.getName())};
   if (!FD)
     return false;
-  dbgs() << DEBUG_PREFIX << "FD runOnFunction remove_redarray\n";
   ASTImportInfo ImportStub;
   const auto *ImportInfo{&ImportStub};
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
-  dbgs() << DEBUG_PREFIX << "end of runOnFunction remove_redarray\n";
   ClangRemoveRedarrayVisitor(*this, F, TfmCtx, *ImportInfo).TraverseDecl(FD);
   return false;
 }
