@@ -86,19 +86,18 @@ namespace {
 /// The visitor searches a pragma `split` and performs splitting for a scope
 /// after it. It also checks absence a macros in this scope and print some
 /// other warnings.
-
 struct notSingleDecl {
-  bool isNotSingleFlag = false;
-  int varDeclsNum = 0;
-  bool isFirstVar = true;
-  SourceLocation notSingleDeclStart;
-  SourceLocation notSingleDeclEnd;
-  std::deque<SourceLocation> starts;
-  std::deque<SourceLocation> ends;
-  std::deque<std::string> names;
-  std::string varDeclType;
+  bool IsNotSingleFlag = false;
+  int VarDeclsNum = 0;
+  bool IsFirstVar = true;
+  bool PointerFlag = false;
+  SourceLocation NotSingleDeclStart;
+  SourceLocation NotSingleDeclEnd;
+  std::deque<SourceLocation> Starts;
+  std::deque<SourceLocation> Ends;
+  std::deque<std::string> Names;
+  std::string VarDeclType;
 };
-
 
 class ClangSplitter : public RecursiveASTVisitor<ClangSplitter> {
 public:
@@ -115,12 +114,11 @@ public:
     if (!S) {
       return RecursiveASTVisitor::TraverseStmt(S);
     }
-    Pragma P(*S); // the Pragma class is used to check if a statement is a pragma or not
-    if (findClause(P, ClauseId::SplitDeclaration, mClauses)) { // mClauses contains all SplitDeclaration pragmas
-      splitPragmaFlag = true;
-      llvm::SmallVector<clang::CharSourceRange, 8> ToRemove; // a vector of statements that will match the root in the tree
+    Pragma P(*S);
+    if (findClause(P, ClauseId::SplitDeclaration, mClauses)) {
+      llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
       auto IsPossible = pragmaRangeToRemove(P, mClauses, mSrcMgr, mLangOpts,
-                                            mImportInfo, ToRemove); // ToRemove - the range of positions we want to remove
+                                            mImportInfo, ToRemove);
       if (!IsPossible.first)
         if (IsPossible.second & PragmaFlags::IsInMacro)
           toDiag(mSrcMgr.getDiagnostics(), mClauses.front()->getBeginLoc(),
@@ -138,80 +136,111 @@ public:
       for (auto SR : ToRemove)
         mRewriter.RemoveText(SR, RemoveEmptyLine); // delete each range
       std::map<clang::SourceLocation, notSingleDecl>::iterator it;
-      for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
-        if (it->second.isNotSingleFlag) {
-          SourceRange toInsert(it->second.notSingleDeclStart, it->second.notSingleDeclEnd);
+      for (it = mGlobalVarDeclsMap.begin(); it != mGlobalVarDeclsMap.end(); it++) {
+        if (it->second.IsNotSingleFlag) {
+          SourceRange toInsert(it->second.NotSingleDeclStart,
+              it->second.NotSingleDeclEnd);
           ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
-          std::cout << "Global range: " << Canvas.getRewrittenText(toInsert).str() << std::endl;
           mRewriter.RemoveText(toInsert, RemoveEmptyLine);
         }
       }
-      if (localVarDecls.isNotSingleFlag) {
-        SourceRange toInsert(localVarDecls.notSingleDeclStart, localVarDecls.notSingleDeclEnd);
+      if (mLocalVarDecls.IsNotSingleFlag) {
+        SourceRange toInsert(mLocalVarDecls.NotSingleDeclStart,
+            mLocalVarDecls.NotSingleDeclEnd);
         mRewriter.RemoveText(toInsert, RemoveEmptyLine);
       }
       return true;
     }
     Rewriter::RewriteOptions RemoveEmptyLine;
     RemoveEmptyLine.RemoveLineIfEmpty = false;
-    if (splitPragmaFlag) {
-      if (localVarDecls.isNotSingleFlag) {
-        SourceRange toInsert(localVarDecls.notSingleDeclStart, localVarDecls.notSingleDeclEnd);
+      if (mLocalVarDecls.IsNotSingleFlag) {
+        SourceRange toInsert(mLocalVarDecls.NotSingleDeclStart,
+            mLocalVarDecls.NotSingleDeclEnd);
         mRewriter.RemoveText(toInsert, RemoveEmptyLine);
-        while (localVarDecls.names.size()) {
-          if (localVarDecls.isFirstVar) {
-            mRewriter.InsertTextAfterToken(localVarDecls.notSingleDeclEnd, localVarDecls.names.back());
-            localVarDecls.isFirstVar = false;
+        while (mLocalVarDecls.Names.size()) {
+          if (mLocalVarDecls.IsFirstVar) {
+            mRewriter.InsertTextAfterToken(mLocalVarDecls.NotSingleDeclEnd,
+                mLocalVarDecls.Names.back());
+            mLocalVarDecls.IsFirstVar = false;
           } else {
-            mRewriter.InsertTextAfterToken(localVarDecls.notSingleDeclEnd, localVarDecls.varDeclType + localVarDecls.names.back());
+            mRewriter.InsertTextAfterToken(mLocalVarDecls.NotSingleDeclEnd,
+                mLocalVarDecls.VarDeclType + mLocalVarDecls.Names.back());
           }
-          localVarDecls.names.pop_back();
+          mLocalVarDecls.Names.pop_back();
         }
       }
 
       std::map<clang::SourceLocation, notSingleDecl>::iterator it;
-      for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
-        std::cout << "GLOBAL INSERT\n";
-        if (it->second.isNotSingleFlag) {
-          // SourceRange toInsert(it->second.notSingleDeclStart, it->second.ends.back());
-          SourceRange toInsert(it->second.notSingleDeclStart, it->second.ends.back());
-          mRewriter.RemoveText(toInsert, RemoveEmptyLine);
-          while (it->second.names.size()) {
-            if (it->second.isFirstVar) {
-              mRewriter.InsertTextAfterToken(it->second.ends.back(), it->second.names.back());
-              it->second.isFirstVar = false;
+      for (it = mGlobalVarDeclsMap.begin(); it != mGlobalVarDeclsMap.end(); it++) {
+      if (it->second.IsNotSingleFlag) {
+        SourceRange toInsert(it->second.NotSingleDeclStart, it->second.Ends.back());
+        mRewriter.RemoveText(toInsert, RemoveEmptyLine);
+        while (it->second.Names.size()) {
+          if (it->second.IsFirstVar) {
+            mRewriter.InsertTextAfterToken(it->second.Ends.back(),
+                it->second.Names.back());
+            it->second.IsFirstVar = false;
+          } else {
+            if (it->second.Names.size() == 1) {
+              mRewriter.InsertTextAfterToken(it->second.Ends.back(),
+                  it->second.VarDeclType + it->second.Names.back());
             } else {
-              if (it->second.names.size() == 1) {
-                mRewriter.InsertTextAfterToken(it->second.ends.back(), it->second.varDeclType + it->second.names.back());
-              } else {
-                mRewriter.InsertTextAfterToken(it->second.ends.back(), it->second.varDeclType + it->second.names.back() + ";\n");
-              }
+              mRewriter.InsertTextAfterToken(it->second.Ends.back(),
+                  it->second.VarDeclType + it->second.Names.back() + ";\n");
             }
-            it->second.names.pop_back();
           }
+          it->second.Names.pop_back();
         }
       }
     }
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
-  std::string getType(SourceLocation start, SourceLocation endLoc) {
-    SourceRange varDeclRange(start, endLoc);
+  std::string getType(SourceLocation beginLoc, SourceLocation endLoc) {
+    SourceRange varDeclRange(beginLoc, endLoc);
     std::string type = mRewriter.getRewrittenText(varDeclRange);
-    std::cout << "type = " << type << std::endl;
+    if (type.find("*") != -1) {
+      mLocalVarDecls.PointerFlag = true;
+      if (mGlobalVarDeclsMap.count(mCurrentSL)) {
+        mGlobalVarDeclsMap[mCurrentSL].PointerFlag = true;
+      }
+    }
     return type;
   }
 
+  void findPointerToConst(QualType qualType, SourceLocation beginLoc) {
+    if (mLocalVarDecls.PointerFlag) {
+      if (qualType.isConstQualified()) {
+        mLocalVarDecls.IsNotSingleFlag = false;
+        if (mTypeLocs.empty() || mTypeLocs.front() != beginLoc) {
+          toDiag(mSrcMgr.getDiagnostics(), beginLoc,
+              tsar::diag::warn_pointers_to_constants_split_prevent);
+          mTypeLocs.push_front(beginLoc);
+        }
+      }
+    }
+    if (mGlobalVarDeclsMap.count(mCurrentSL) && mGlobalVarDeclsMap[mCurrentSL].PointerFlag) {
+      if (qualType.isConstQualified()) {
+        mGlobalVarDeclsMap[mCurrentSL].IsNotSingleFlag = false;
+        if (mTypeLocs.empty() || mTypeLocs.front() != beginLoc) {
+          toDiag(mSrcMgr.getDiagnostics(), beginLoc,
+              tsar::diag::warn_pointers_to_constants_split_prevent);
+          mTypeLocs.push_front(beginLoc);
+        }
+      }
+    }
+  }
+
   bool TraverseTypeLoc(TypeLoc Loc) {
-    std::map<clang::SourceLocation, notSingleDecl>::iterator it;
-    if (localVarDecls.isNotSingleFlag && localVarDecls.varDeclsNum == 1) {
-      localVarDecls.varDeclType = getType(start, Loc.getEndLoc());
+    findPointerToConst(Loc.getType(), Loc.getBeginLoc());
+    if (mLocalVarDecls.IsNotSingleFlag && mLocalVarDecls.VarDeclsNum == 1) {
+      mLocalVarDecls.VarDeclType = getType(mLocalVarDecls.NotSingleDeclStart, Loc.getEndLoc());
       return RecursiveASTVisitor::TraverseTypeLoc(Loc);
     }
-    if (globalVarDeclsMap.count(currentSL)) {
-      if (globalVarDeclsMap[currentSL].varDeclsNum == 1) {
-        std::cout << "CURRENT = " << globalVarDeclsMap.count(currentSL) << std::endl;
-        globalVarDeclsMap[currentSL].varDeclType = getType(currentSL, Loc.getEndLoc());
+    if (mGlobalVarDeclsMap.count(mCurrentSL)) {
+      if (mGlobalVarDeclsMap[mCurrentSL].VarDeclsNum == 1) {
+        mGlobalVarDeclsMap[mCurrentSL].VarDeclType = getType(mCurrentSL,
+            Loc.getEndLoc());
         return RecursiveASTVisitor::TraverseTypeLoc(Loc);
       }
     }
@@ -222,116 +251,108 @@ public:
     std::string txtStr;
     ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
     SourceRange Range(S->getLocation());
-    std::cout << "Range: " << Canvas.getRewrittenText(Range).str() << std::endl;
-    localVarDecls.starts.push_front(S->getBeginLoc());
-    localVarDecls.ends.push_front(S->getEndLoc());
+    mLocalVarDecls.Starts.push_front(S->getBeginLoc());
+    mLocalVarDecls.Ends.push_front(S->getEndLoc());
     SourceRange varDeclRange(S->getBeginLoc(), S->getEndLoc());
-    if (localVarDecls.varDeclsNum == 1) {
-      localVarDecls.isFirstVar = true;
+    if (mLocalVarDecls.VarDeclsNum == 1) {
+      mLocalVarDecls.IsFirstVar = true;
       txtStr = Canvas.getRewrittenText(varDeclRange).str();
-      std::cout << "first localVarDeclsNum = " << localVarDecls.varDeclsNum << " " << txtStr << std::endl;
     }
-    if (localVarDecls.varDeclsNum > 1) {
-      SourceRange prevVarDeclRange(localVarDecls.starts.back(), localVarDecls.ends.back());
-      localVarDecls.starts.pop_back();
-      localVarDecls.ends.pop_back();
+    if (mLocalVarDecls.VarDeclsNum > 1) {
+      SourceRange prevVarDeclRange(mLocalVarDecls.Starts.back(),
+          mLocalVarDecls.Ends.back());
+      mLocalVarDecls.Starts.pop_back();
+      mLocalVarDecls.Ends.pop_back();
       Canvas.ReplaceText(prevVarDeclRange, "");
       txtStr = Canvas.getRewrittenText(varDeclRange).str();
-      std::cout << "varDeclsNum = " << localVarDecls.varDeclsNum << " " << txtStr << std::endl;
       auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
       txtStr.erase(it, txtStr.end());
-      std::cout << "varDeclsNum = " << localVarDecls.varDeclsNum << " " << txtStr << std::endl;
     }
-    localVarDecls.names.push_front(txtStr + ";\n");
+    mLocalVarDecls.Names.push_front(txtStr + ";\n");
   }
 
   void ProcessGlobalDeclaration(VarDecl *S, SourceRange toInsert) {
     std::string txtStr;
     ExternalRewriter Canvas(toInsert, mSrcMgr, mLangOpts);
     SourceRange Range(S->getLocation());
-    std::cout << "Range: " << Canvas.getRewrittenText(Range).str() << std::endl;
-    globalVarDeclsMap[S->getBeginLoc()].starts.push_front(S->getBeginLoc());
-    globalVarDeclsMap[S->getBeginLoc()].ends.push_front(S->getEndLoc());
+    mGlobalVarDeclsMap[S->getBeginLoc()].Starts.push_front(S->getBeginLoc());
+    mGlobalVarDeclsMap[S->getBeginLoc()].Ends.push_front(S->getEndLoc());
     SourceRange varDeclRange(S->getBeginLoc(), S->getEndLoc());
-    if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum == 1) {
-      globalVarDeclsMap[S->getBeginLoc()].isFirstVar = true;
+    if (mGlobalVarDeclsMap[S->getBeginLoc()].VarDeclsNum == 1) {
+      mGlobalVarDeclsMap[S->getBeginLoc()].IsFirstVar = true;
       txtStr = Canvas.getRewrittenText(varDeclRange).str();
-      std::cout << "first localVarDeclsNum = " << globalVarDeclsMap[S->getBeginLoc()].varDeclsNum << " " << txtStr << std::endl;
-
-      globalVarDeclsMap[S->getBeginLoc()].notSingleDeclStart = S->getBeginLoc();
-      globalVarDeclsMap[S->getBeginLoc()].names.push_front(txtStr + ";\n");
+      mGlobalVarDeclsMap[S->getBeginLoc()].NotSingleDeclStart = S->getBeginLoc();
+      mGlobalVarDeclsMap[S->getBeginLoc()].Names.push_front(txtStr + ";\n");
     }
-    if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum > 1) {
-      SourceRange prevVarDeclRange(globalVarDeclsMap[S->getBeginLoc()].starts.back(), globalVarDeclsMap[S->getBeginLoc()].ends.back());
-      globalVarDeclsMap[S->getBeginLoc()].starts.pop_back();
-      globalVarDeclsMap[S->getBeginLoc()].ends.pop_back();
+    if (mGlobalVarDeclsMap[S->getBeginLoc()].VarDeclsNum > 1) {
+      SourceRange prevVarDeclRange(mGlobalVarDeclsMap[S->getBeginLoc()].Starts.back(),
+          mGlobalVarDeclsMap[S->getBeginLoc()].Ends.back());
+      mGlobalVarDeclsMap[S->getBeginLoc()].Starts.pop_back();
+      mGlobalVarDeclsMap[S->getBeginLoc()].Ends.pop_back();
       Canvas.ReplaceText(prevVarDeclRange, "");
       txtStr = Canvas.getRewrittenText(varDeclRange).str();
-      std::cout << "varDeclsNum = " << globalVarDeclsMap[S->getBeginLoc()].varDeclsNum << " " << txtStr << std::endl;
+
       auto it = std::remove(txtStr.begin(), txtStr.end(), ',');
       txtStr.erase(it, txtStr.end());
-      std::cout << "varDeclsNum = " << globalVarDeclsMap[S->getBeginLoc()].varDeclsNum << " " << txtStr << std::endl;
 
-      globalVarDeclsMap[S->getBeginLoc()].names.push_front(txtStr);
+      mGlobalVarDeclsMap[S->getBeginLoc()].Names.push_front(txtStr);
     }
-    globalVarDeclsMap[S->getBeginLoc()].notSingleDeclEnd = S->getEndLoc();
+    mGlobalVarDeclsMap[S->getBeginLoc()].NotSingleDeclEnd = S->getEndLoc();
   }
 
   bool VisitVarDecl(VarDecl *S) { // to traverse the parse tree and visit each statement
-      currentSL = S->getBeginLoc();
+    mCurrentSL = S->getBeginLoc();
     if (mGlobalInfo.findOutermostDecl(S)) {
-      if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum == 0) {
+      if (mGlobalVarDeclsMap[S->getBeginLoc()].VarDeclsNum == 0) {
         std::map<clang::SourceLocation, notSingleDecl>::iterator it;
-        for (it = globalVarDeclsMap.begin(); it != globalVarDeclsMap.end(); it++) {
+        for (it = mGlobalVarDeclsMap.begin(); it != mGlobalVarDeclsMap.end(); it++) {
           if (it->first != S->getBeginLoc()) {
-            // it->second.starts.clear();
-            // it->second.ends.clear();
-            // it->second.names.clear();
-            // globalVarDeclsMap.erase(it->first);
+            // it->second.Starts.clear();
+            // it->second.Ends.clear();
+            // it->second.Names.clear();
+            // mGlobalVarDeclsMap.erase(it->first);
           }
         }
       }
-      globalVarDeclsMap[S->getBeginLoc()].varDeclsNum++;
-      if (globalVarDeclsMap[S->getBeginLoc()].varDeclsNum == 2) {
-        globalVarDeclsMap[S->getBeginLoc()].isNotSingleFlag = true;
+      mGlobalVarDeclsMap[S->getBeginLoc()].VarDeclsNum++;
+      if (mGlobalVarDeclsMap[S->getBeginLoc()].VarDeclsNum == 2) {
+        mGlobalVarDeclsMap[S->getBeginLoc()].IsNotSingleFlag = true;
       }
       SourceRange toInsert(S->getBeginLoc(), S->getEndLoc());
       ProcessGlobalDeclaration(S, toInsert);
     }
-    if (localVarDecls.isNotSingleFlag) {
-      localVarDecls.varDeclsNum++;
-      SourceRange toInsert(localVarDecls.notSingleDeclStart, localVarDecls.notSingleDeclEnd);
+    if (mLocalVarDecls.IsNotSingleFlag) {
+      mLocalVarDecls.VarDeclsNum++;
+      SourceRange toInsert(mLocalVarDecls.NotSingleDeclStart,
+          mLocalVarDecls.NotSingleDeclEnd);
       ProcessLocalDeclaration(S, toInsert);
     }
     return true;
   }
 
-
   bool VisitDeclStmt(DeclStmt *S) {
     if(!(S->isSingleDecl())) {
-      start = S->getBeginLoc();
-      localVarDecls.varDeclsNum = 0;
-      localVarDecls.starts.clear();
-      localVarDecls.ends.clear();
-      localVarDecls.names.clear();
-      localVarDecls.isNotSingleFlag = true;
-      std::cout << "IS NOT SINGLE\n";
-      localVarDecls.notSingleDeclStart = S->getBeginLoc();
-      localVarDecls.notSingleDeclEnd = S->getEndLoc();
-      varPositions[S->getBeginLoc()] = S->getEndLoc();
+      mLocalVarDecls.VarDeclsNum = 0;
+      mLocalVarDecls.Starts.clear();
+      mLocalVarDecls.Ends.clear();
+      mLocalVarDecls.Names.clear();
+      mLocalVarDecls.IsNotSingleFlag = true;
+      mLocalVarDecls.NotSingleDeclStart = S->getBeginLoc();
+      mLocalVarDecls.NotSingleDeclEnd = S->getEndLoc();
     } else {
-      std::cout << "IS SINGLE\n";
-      localVarDecls.isNotSingleFlag = false;
+      mLocalVarDecls.IsNotSingleFlag = false;
     }
     return true;
   }
 
   bool VisitParmVarDecl(ParmVarDecl *S) {
-    std::cout << "is ParmVarDecl" << std::endl;
-    localVarDecls.isNotSingleFlag = false;
+    if (mLocalVarDecls.IsNotSingleFlag) {
+      toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
+          tsar::diag::warn_parm_var_decl_split_prevent);
+      mLocalVarDecls.IsNotSingleFlag = false;
+    }
     return true;
   }
-
 
   bool VisitStmt(Stmt *S) {
     if (!mClauses.empty()) {
@@ -349,25 +370,20 @@ public:
     return RecursiveASTVisitor::VisitDecl(D);
   }
 
-  private:
-
+private:
   ClangTransformationContext *mTfmCtx;
   const ASTImportInfo &mImportInfo;
   const GlobalInfoExtractor &mGlobalInfo;
-
   ClangGlobalInfo::RawInfo *mRawInfo;
   Rewriter &mRewriter;
   ASTContext &mContext;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
   SmallVector<Stmt *, 1> mClauses;
-  bool splitPragmaFlag = false;
-
-  std::map<SourceLocation, notSingleDecl> globalVarDeclsMap;
-  std::map<SourceLocation, SourceLocation> varPositions;
-  notSingleDecl localVarDecls;
-  SourceLocation start;
-  SourceLocation currentSL;
+  std::map<SourceLocation, notSingleDecl> mGlobalVarDeclsMap;
+  notSingleDecl mLocalVarDecls;
+  SourceLocation mCurrentSL;
+  std::deque<SourceLocation> mTypeLocs;
 };
 }
 
@@ -382,7 +398,6 @@ bool ClangSplitDeclsPass::runOnModule(llvm::Module &M) {
   const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
-  //auto &GIP{getAnalysis<ClangGlobalInfoPass>()};
   auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
   for (auto *MD : CUs->operands()) {
     auto *CU{cast<DICompileUnit>(MD)};
@@ -398,7 +413,8 @@ bool ClangSplitDeclsPass::runOnModule(llvm::Module &M) {
     if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
       ImportInfo = &ImportPass->getImportInfo();
     auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-    ClangSplitter Vis(*TfmCtx, *ImportInfo, GIP.getGlobalInfo(TfmCtx)->GIE, GIP.getGlobalInfo(TfmCtx)->RI);
+    ClangSplitter Vis(*TfmCtx, *ImportInfo, GIP.getGlobalInfo(TfmCtx)->GIE,
+        GIP.getGlobalInfo(TfmCtx)->RI);
     Vis.TraverseDecl(TfmCtx->getContext().getTranslationUnitDecl());
   }
   return false;

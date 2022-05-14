@@ -107,6 +107,8 @@ def note_assert_no_macro : Note<"macro found">;
 def warn_rename_macro_prevent : Warning<"macro prevent renaming">;
 
 def warn_splitdeclaration_macro_prevent : Warning<"macro prevent splitting">;
+def warn_parm_var_decl_split_prevent : Warning<"local parm variable declarations are not splitted">
+def warn_pointers_to_constants_split_prevent : Warning<"declarations of pointers to constants are not splitted">
 
 def warn_propagate_macro_prevent : Warning<"macro prevent expression propagation">;
 def warn_disable_propagate_in_include : Warning<"disable expression propagation in header file">;
