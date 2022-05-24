@@ -330,6 +330,7 @@ public:
           LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "number of arrays does not match number of their sizes\n");
           return false;
       }
+      std::string variableDeclaration = "";
       for (int i = 0; i < mDecls.size(); i++) {
           auto [ArrName, ArrayStmt] = mDecls[i];
           auto [SizeLiteral, SizeStmt] = mSizes[i];
@@ -355,22 +356,31 @@ public:
               ToInsert += (" " + newVarName + " = " + ArrName + "[" + std::to_string(i) + "]");
           }
           ToInsert += (";\n");
-          mRewriter.InsertTextBefore(S->getBeginLoc(),
-              ToInsert); // insert array variables
-                                    // definitions here
+          variableDeclaration += ToInsert;
       }
       mStatus = FIND_INDEX;
       auto Res = RecursiveASTVisitor::TraverseStmt(S);
       mStatus = FIND_OP;
       Res = RecursiveASTVisitor::TraverseStmt(S);
-      for (int i = 0; i < mDecls.size(); i++) {
-          auto [ArrName, ArrayStmt] = mDecls[i];
-          auto [SizeLiteral, SizeStmt] = mSizes[i];
-          std::string ToInsert = "";
-          for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
-              ToInsert += ArrName + "[" + std::to_string(i) + "] = " + arrayVarNames[ArrName][i] + ";\n";
+      if (checksPassed) {
+          mRewriter.InsertTextBefore(S->getBeginLoc(),
+              variableDeclaration); // insert array variables
+                                    // definitions here
+          for (int i = 0; i < rangeToReplace.size(); i++) {
+              mRewriter.ReplaceText(rangeToReplace[i], textToReplace[i]);
           }
-          mRewriter.InsertTextAfterToken(S->getEndLoc(), ToInsert);
+          for (int i = 0; i < mDecls.size(); i++) {
+              auto [ArrName, ArrayStmt] = mDecls[i];
+              auto [SizeLiteral, SizeStmt] = mSizes[i];
+              std::string ToInsert = "";
+              for (int i = 0; i < cast<clang::IntegerLiteral>(SizeStmt)->getValue().getSExtValue(); i++) {
+                  ToInsert += ArrName + "[" + std::to_string(i) + "] = " + arrayVarNames[ArrName][i] + ";\n";
+              }
+              mRewriter.InsertTextAfterToken(S->getEndLoc(), ToInsert);
+          }
+      }
+      else {
+          return false;
       }
       return true;
 
@@ -423,6 +433,7 @@ public:
               }
               if (arrayJInPragma && array0InPragma) {
                   LLVM_DEBUG(dbgs() << DEBUG_PREFIX << "different arrays in operator are not yet supported\n");
+                  checksPassed = false;
                   return false;
               }
           }
@@ -440,7 +451,16 @@ public:
         switchText += "case " + std::to_string(i) + ":\n" + caseBody + ";\nbreak;\n";
       }
       switchText += "}";
-      mRewriter.ReplaceText(clang::SourceRange(S->getBeginLoc(), S->getEndLoc()), switchText);
+      bool sourceRangeInArray = false;
+      for (auto range : rangeToReplace) {
+          if (range.fullyContains(S->getSourceRange())) {
+              sourceRangeInArray = true;
+          }
+      }
+      if (!sourceRangeInArray) {
+          rangeToReplace.push_back(S->getSourceRange());
+          textToReplace.push_back(switchText);
+      }
       clearArraySubscr();
       return RecursiveASTVisitor::TraverseStmt(S);
     }
@@ -484,6 +504,9 @@ private:
     mSizes.clear();
     mInductions.clear();
     arrayVarNames.clear();
+    rangeToReplace.clear();
+    textToReplace.clear();
+    checksPassed = true;
   }
 
   void clearArraySubscr() {
@@ -521,7 +544,10 @@ private:
   std::vector<std::tuple<std::string, clang::IntegerLiteral*>> mSizes;
   std::map<std::string, std::vector<std::string> > arrayVarNames;
   std::vector<clang::ArraySubscriptExpr *> mArraySubscriptExpr;
+  std::vector<clang::SourceRange> rangeToReplace;
+  std::vector<std::string> textToReplace;
   bool mIsSubscriptUseful;
+  bool checksPassed = true;
   clang::VarDecl* mIndex;
 
   LoopNest mInductions;
