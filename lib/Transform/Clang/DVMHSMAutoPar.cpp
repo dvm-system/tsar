@@ -475,7 +475,11 @@ static void sanitizeAcrossLoops(ItrT I, ItrT EI,
       continue;
     SmallVector<const Decl *, 4> UntiedVars;
     auto &Clauses{Parallel->getClauses()};
-    for (auto &&[V, Distances] : Clauses.template get<trait::Dependence>()) {
+    // for (auto &&[V, Distances] : Clauses.template get<trait::Dependence>()) {
+    for (auto &&elem : Clauses.template get<trait::Dependence>()) {
+      auto &&V = elem.first;
+      auto &&Distances = elem.second;
+
       auto Range{Clauses.template get<trait::DirectAccess>().equal_range(V)};
       auto TieItr{find_if(Range.first, Range.second, [&V](const auto &Tie) {
         return Tie.first.template get<MD>() == V.template get<MD>();
