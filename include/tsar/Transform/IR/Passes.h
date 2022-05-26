@@ -100,5 +100,8 @@ void initializeNoCaptureAnalysisPass(PassRegistry &Registry);
 
 /// Create a pass calculating preserved parameters.
 Pass * createNoCaptureAnalysisPass();
+
+void initializeMallocWrapperPassPass(PassRegistry& Registry);
+ModulePass* createMallocWrapperPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H

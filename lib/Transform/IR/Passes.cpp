@@ -37,4 +37,5 @@ void llvm::initializeIRTransform(PassRegistry &Registry) {
   initializeDependenceInlinerPassPass(Registry);
   initializeDependenceInlinerAttributerPass(Registry);
   initializeNoCaptureAnalysisPass(Registry);
+  initializeMallocWrapperPassPass(Registry);
 }
