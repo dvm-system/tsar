@@ -42,7 +42,7 @@ macro(sapfor_install_llvm)
   endif()
 
   if(BUILD_FLANG)
-    add_external_tool(FLANG_BUILD flang)
+    add_external_tool(FLANG_BUILD flang-new)
   endif()
 
   if(BUILD_PROFILE)
