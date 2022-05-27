@@ -3,7 +3,7 @@ set(FRONTEND_SOURCES TransformationContext.cpp Tooling.cpp Action.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE FRONTEND_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}/include/tsar/Frontend/Clang/*.h)
+    ${PROJECT_SOURCE_DIR}/include/tsar/Frontend/Flang/*.h)
   file(GLOB_RECURSE FRONTEND_INTERNAL_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.h)
   source_group(bcl FILES ${BCL_CORE_HEADERS})
