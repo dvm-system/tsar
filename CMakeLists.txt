@@ -97,18 +97,21 @@ cmake_dependent_option(BUILD_LLC "Build LLVM IR static compiler" OFF
   "NOT PACKAGE_LLVM" OFF)
 cmake_dependent_option(BUILD_LINK "Build LLVM bitcode linker" OFF
   "NOT PACKAGE_LLVM" OFF)
-cmake_dependent_option(BUILD_FLANG "Build LLVM native Fortran compiler Flang" OFF UNIX OFF)
+cmake_dependent_option(BUILD_FLANG "Build LLVM native Fortran compiler Flang" OFF
+  "NOT PACKAGE_LLVM" OFF)
 
 option(TSAR_ENABLE_LLVM_DUMP "Enable use of dump() method for LLVM types" ON)
 
 set(LLVM_SOURCE_DIR "${LLVM_PROJECT_DIR}/llvm")
 set(CLANG_SOURCE_DIR "${LLVM_PROJECT_DIR}/clang")
 set(FLANG_SOURCE_DIR "${LLVM_PROJECT_DIR}/flang")
+set(MLIR_SOURCE_DIR "${LLVM_PROJECT_DIR}/mlir")
 set(COMPILER_RT_SOURCE_DIR "${LLVM_PROJECT_DIR}/compiler-rt")
 
 set(LLVM_BINARY_DIR "${CMAKE_BINARY_DIR}/llvm-build")
 set(CLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/clang")
 set(FLANG_BINARY_DIR "${LLVM_BINARY_DIR}/tools/flang")
+set(MLIR_BINARY_DIR "${LLVM_BINARY_DIR}/tools/mlir")
 
 set(FLANG_FOUND OFF)
 
@@ -117,6 +120,7 @@ if(PACKAGE_LLVM)
   set(LLVM_SOURCE_DIR "${LLVM_BINARY_DIR}/include/llvm")
   set(CLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/clang")
   set(FLANG_SOURCE_DIR "${LLVM_BINARY_DIR}/include/flang")
+  set(MLIR_SOURCE_DIR "${LLVM_BINARY_DIR}/include/mlir")
   set(CLANG_INCLUDE_DIR "${LLVM_BINARY_DIR}/lib/clang/${LLVM_VERSION}/include")
   set(CLANG_EXECUTABLE "${LLVM_BINARY_DIR}/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
   if (EXISTS ${FLANG_SOURCE_DIR})
@@ -143,6 +147,9 @@ else()
   endif()
   if (BUILD_FLANG AND NOT EXISTS ${FLANG_SOURCE_DIR})
     message(FATAL_ERROR "FLANG_SOURCE_DIR '${FLANG_SOURCE_DIR}' does not exist")
+  endif()
+  if (BUILD_FLANG AND NOT EXISTS ${MLIR_SOURCE_DIR})
+    message(FATAL_ERROR "MLIR_SOURCE_DIR '${MLIR_SOURCE_DIR}' does not exist")
   endif()
   if (BUILD_PROFILE AND NOT EXISTS ${COMPILER_RT_SOURCE_DIR})
     message(FATAL_ERROR "COMPILER_RT_SOURCE_DIR '${COMPILER_RT_SOURCE_DIR}' does not exist")
@@ -255,7 +262,20 @@ if(NOT PACKAGE_LLVM)
 endif()
 if(NOT PACKAGE_LLVM AND FLANG_FOUND)
   list(APPEND LLVM_INCLUDE_DIRS
-    ${FLANG_SOURCE_DIR}/include ${FLANG_BINARY_DIR}/include)
+    ${FLANG_SOURCE_DIR}/include ${FLANG_BINARY_DIR}/include
+    ${MLIR_SOURCE_DIR}/include ${MLIR_BINARY_DIR}/include)
+# TODO: LLVM specify include directories relative to build path, however
+# in case of SAPFOR build path is not a build path for LLVM.
+# Hence we manually add correct include directories for Flang libraries.
+  target_include_directories(obj.FIRBuilder SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.FIRCodeGen SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.FIRDialect SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.FIRSupport SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.FIRTransforms SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.flangFrontend SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.flangFrontendTool SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.FortranLower SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(flang-new SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 endif()
 include_directories(${LLVM_INCLUDE_DIRS})
 
@@ -303,6 +323,9 @@ if (MSVC)
       set(LLVM_RELEASE_BUILD "\"\"")
       add_compile_options("/MD")
     endif()
+  endif()
+  if (MSVC_VERSION GREATER_EQUAL 1920)
+    add_compile_options("/Zc:__cplusplus")
   endif()
 endif()
 
