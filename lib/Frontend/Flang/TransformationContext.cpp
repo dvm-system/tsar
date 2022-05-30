@@ -25,10 +25,13 @@
 #include "tsar/Frontend/Flang/TransformationContext.h"
 #include "tsar/Support/Flang/Diagnostic.h"
 #include <bcl/tuple_utils.h>
+#include <flang/Lower/Mangler.h>
 #include <flang/Parser/parse-tree-visitor.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/DebugInfoMetadata.h>
+
+#define DEBUG_TYPE "flang-transformation"
 
 using namespace tsar;
 using namespace llvm;
@@ -121,68 +124,68 @@ private:
       mUnits;
 };
 
-using NameHierarchyMapT = std::map<SmallVector<std::string, 3>, std::string>;
+using IntrinsicMapT = llvm::StringMap<SmallVector<const llvm::Function *, 1>>;
 using MangledToSourceMapT = llvm::StringMap<FlangASTUnitRef>;
 
-void collect(const Module &M, const DICompileUnit &CU,
-    NameHierarchyMapT &NameHierarchy) {
-  for (auto &F : M) {
-    if (auto *DISub = F.getSubprogram(); DISub && DISub->getUnit() == &CU) {
-      NameHierarchyMapT::key_type Key;
-      DIScope *Scope{DISub};
-      do {
-        if (Scope->getName().empty() &&
-            (!FlangTransformationContext::UnnamedProgramStub.empty() ||
-             !isa<DISubprogram>(Scope) ||
-             !cast<DISubprogram>(Scope)->isMainSubprogram()))
-          break;
-        Key.push_back(std::string{Scope->getName()});
-        Scope = Scope->getScope();
-      } while (Scope != &CU && Scope);
-      if (Scope != &CU)
-        continue;
-      std::reverse(Key.begin(), Key.end());
-      NameHierarchy.try_emplace(Key, F.getName());
-    }
-  }
+static std::string getMangledName(const Fortran::semantics::Symbol &S) {
+  const std::string *BindName = S.GetBindName();
+  return BindName ? *BindName : Fortran::lower::mangle::mangleName(S);
 }
 
-void match(semantics::Scope &Parent, NameHierarchyMapT::key_type &Names,
-           const NameHierarchyMapT &NameHierarchy,
-           const ProgramUnitCollector &Collector, MangledToSourceMapT &Map) {
-  if (auto *S{Parent.symbol()}) {
-    Names.push_back((Parent.kind() != semantics::Scope::Kind::MainProgram ||
-                     !S->name().empty())
-                        ? S->name().ToString()
-                        : FlangTransformationContext::UnnamedProgramStub.str());
-    if (Parent.kind() == semantics::Scope::Kind::Subprogram ||
-        Parent.kind() == semantics::Scope::Kind::MainProgram)
-      if (auto I = NameHierarchy.find(Names); I != NameHierarchy.end()) {
-        auto ParserUnit{Parent.kind() == semantics::Scope::Kind::MainProgram
+void match(semantics::Scope &Parent, const ProgramUnitCollector &Collector,
+           IntrinsicMapT &Intrinsics, MangledToSourceMapT &Map) {
+#ifdef LLVM_DEBUG
+  auto log = [](semantics::Symbol &S, StringRef MangledName, bool Add) {
+    dbgs() << "[FLANG TRANSFORMATION]: " << (Add ? "add" : "ignore")
+           << " demangled symbol '" << S.GetUltimate().name().ToString()
+           << "' for '" << MangledName << "' [" << &S << "]\n";
+  };
+#endif
+  for (auto &&[Name, S] : Parent)
+    if (S->test(semantics::Symbol::Flag::Function) ||
+        S->test(semantics::Symbol::Flag::Subroutine) ||
+        S->has<semantics::MainProgramDetails>())
+      if (!S->attrs().test(semantics::Attr::INTRINSIC)) {
+        auto ParserUnit{S->has<semantics::MainProgramDetails>()
                             ? Collector.getMainParserUnit()
-                            : Collector.findParserUnit(S)};
-        assert(ParserUnit &&
-               "Representation of a program unit in AST must be known!");
-        Map.try_emplace(I->second, ParserUnit, S);
+                            : Collector.findParserUnit(&*S)};
+        [[maybe_unused]] auto Info{
+            Map.try_emplace(getMangledName(S->GetUltimate()), ParserUnit, &*S)};
+        LLVM_DEBUG(log(*S, getMangledName(S->GetUltimate()), Info.second));
+      } else if (auto I{Intrinsics.find(S->GetUltimate().name().ToString())};
+                 I != Intrinsics.end()) {
+        for (auto *F : I->second) {
+          [[maybe_unused]] auto Info{
+              Map.try_emplace(F->getName(), nullptr, &*S)};
+          LLVM_DEBUG(log(*S, F->getName(), Info.second));
+        }
       }
-    for (auto &Child : Parent.children())
-      match(Child, Names, NameHierarchy, Collector, Map);
-    Names.pop_back();
+  for (auto &&[Name, S] : Parent.commonBlocks()) {
+    [[maybe_unused]] auto Info{
+        Map.try_emplace(getMangledName(S->GetUltimate()), nullptr, &*S)};
+    LLVM_DEBUG(log(*S, getMangledName(S->GetUltimate()), Info.second));
   }
+  for (auto &Child : Parent.children())
+    match(Child, Collector, Intrinsics, Map);
 }
 }
 
 void FlangTransformationContext::initialize(
     const Module &M, const DICompileUnit &CU) {
   assert(hasInstance() && "Transformation context is not configured!");
-  NameHierarchyMapT NameHierarchy;
-  collect(M, CU, NameHierarchy);
   ProgramUnitCollector V;
   parser::Walk(mParsing->parseTree(), V);
-  for (auto &Child : mContext->globalScope().children()) {
-    NameHierarchyMapT::key_type Names;
-    match(Child, Names, NameHierarchy, V, mGlobals);
+  IntrinsicMapT Intrinsics;
+  for (auto &F : M) {
+    StringRef Prefix{"fir."};
+    if (F.getName().startswith(Prefix)) {
+      auto GeneralName{F.getName().drop_front(Prefix.size())};
+      auto GeneralNameEnd(F.getName().find("."));
+      GeneralName = GeneralName.substr(0, GeneralNameEnd);
+      Intrinsics.try_emplace(GeneralName).first->second.push_back(&F);
+    }
   }
+  match(mContext->globalScope(), V, Intrinsics, mGlobals);
   mRewriter = std::make_unique<FlangRewriter>(mParsing->cooked(),
                                               mParsing->allCooked());
 }
