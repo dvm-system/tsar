@@ -33,8 +33,8 @@
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/Pass.h>
 
-#ifndef TSAR_EXPRESSION_MATCHER_H
-#define TSAR_EXPRESSION_MATCHER_H
+#ifndef TSAR_CLANG_EXPRESSION_MATCHER_H
+#define TSAR_CLANG_EXPRESSION_MATCHER_H
 
 namespace tsar {
 class ClangTransformationContext;
@@ -88,4 +88,4 @@ private:
 
 }
 
-#endif//TSAR_EXPRESSION_MATCHER_H
+#endif//TSAR_CLANG_EXPRESSION_MATCHER_H

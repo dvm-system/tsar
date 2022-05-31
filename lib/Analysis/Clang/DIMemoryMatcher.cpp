@@ -128,19 +128,17 @@ struct DILocalScopeMapInfo {
   }
 };
 
-using MatchDIVisitorBase = MatchASTBase<DIVariable *, VarDecl *,
-  DILocalScope *, DILocalScopeMapInfo,
-  unsigned, DenseMapInfo<unsigned>,
-  ClangDIMemoryMatcherPass::DIMemoryMatcher,
-  ClangDIMemoryMatcherPass::MemoryASTSet>;
-
-class MatchDIVisitor :
-    public MatchDIVisitorBase,
-    public RecursiveASTVisitor<MatchDIVisitor> {
+class MatchDIVisitor
+    : public ClangMatchASTBase<MatchDIVisitor, DIVariable *, VarDecl *,
+                               DILocalScope *, DILocalScopeMapInfo, unsigned,
+                               DenseMapInfo<unsigned>,
+                               ClangDIMemoryMatcherPass::DIMemoryMatcher,
+                               ClangDIMemoryMatcherPass::MemoryASTSet>,
+      public RecursiveASTVisitor<MatchDIVisitor> {
 public:
   MatchDIVisitor(SourceManager &SrcMgr, Matcher &MM,
       UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
-    MatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
+    ClangMatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
 
   bool VisitVarDecl(VarDecl *D) {
     mVisitedVars.push_back(D->getCanonicalDecl());

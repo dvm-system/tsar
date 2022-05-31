@@ -126,14 +126,16 @@ STATISTIC(NumNonMatchASTMemory, "Number of non-matched AST variables");
 namespace {
 /// This matches allocas (IR) and variables (AST).
 class MatchAllocaVisitor
-    : public MatchASTBase<Value *, VarDecl *, DILocation *, DILocationMapInfo,
-                          unsigned, DenseMapInfo<unsigned>,
-                          MemoryMatchInfo::MemoryMatcher>,
+    : public ClangMatchASTBase<MatchAllocaVisitor,
+                               Value *, VarDecl *, DILocation *,
+                               DILocationMapInfo, unsigned,
+                               DenseMapInfo<unsigned>,
+                               MemoryMatchInfo::MemoryMatcher>,
       public RecursiveASTVisitor<MatchAllocaVisitor> {
 public:
   MatchAllocaVisitor(SourceManager &SrcMgr, Matcher &MM,
     UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
-      MatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
+      ClangMatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
 
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.

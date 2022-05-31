@@ -65,7 +65,7 @@ INITIALIZE_PASS_END(LoopMatcherPass, "loop-matcher",
 namespace {
 /// This matches explicit for, while and do-while loops.
 class MatchExplicitVisitor :
-  public MatchASTBase<Loop *, Stmt *>,
+  public ClangMatchASTBase<MatchExplicitVisitor, Loop *, Stmt *>,
   public RecursiveASTVisitor<MatchExplicitVisitor> {
 public:
 
@@ -83,11 +83,11 @@ public:
   /// in this map. These loops will not inserted in LM map and must be evaluated
   /// further. The key in this map is a raw encoding for expansion location.
   /// To decode it use SourceLocation::getFromRawEncoding() method.
-  MatchExplicitVisitor(SourceManager &SrcMgr,
-      Matcher &LM, UnmatchedASTSet &Unmatched,
-      LocToIRMap &LocMap, LocToIRMap &ImplicitMap, LocToASTMap &MacroMap) :
-    MatchASTBase(SrcMgr, LM, Unmatched, LocMap, MacroMap),
-    mLocToImplicit(&ImplicitMap) {}
+  MatchExplicitVisitor(SourceManager &SrcMgr, Matcher &LM,
+                       UnmatchedASTSet &Unmatched, LocToIRMap &LocMap,
+                       LocToIRMap &ImplicitMap, LocToASTMap &MacroMap)
+      : ClangMatchASTBase(SrcMgr, LM, Unmatched, LocMap, MacroMap),
+        mLocToImplicit(&ImplicitMap) {}
 
   /// \brief Evaluates statements expanded from a macro.
   ///
@@ -186,12 +186,14 @@ private:
 
 /// This matches implicit loops.
 class MatchImplicitVisitor :
-  public MatchASTBase<Loop *, Stmt *>,
+  public ClangMatchASTBase<MatchImplicitVisitor, Loop *, Stmt *>,
   public RecursiveASTVisitor<MatchImplicitVisitor> {
 public:
   MatchImplicitVisitor(SourceManager &SrcMgr, Matcher &LM,
-    UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
-    MatchASTBase(SrcMgr, LM, Unmatched, LocMap, MacroMap), mLastLabel(nullptr) {}
+                       UnmatchedASTSet &Unmatched, LocToIRMap &LocMap,
+                       LocToASTMap &MacroMap)
+      : ClangMatchASTBase(SrcMgr, LM, Unmatched, LocMap, MacroMap),
+        mLastLabel(nullptr) {}
 
   bool VisitStmt(Stmt *S) {
     // We try to find a label which is a start of the loop header.
