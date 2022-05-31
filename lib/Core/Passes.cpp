@@ -36,6 +36,7 @@
 #include "tsar/Transform/IR/Passes.h"
 #include "tsar/Transform/Mixed/Passes.h"
 #ifdef FLANG_FOUND
+# include "tsar/Analysis/Flang/Passes.h"
 # include "tsar/Transform/Flang/Passes.h"
 #endif
 #ifdef APC_FOUND
@@ -57,6 +58,7 @@ void llvm::initializeTSAR(PassRegistry &Registry) {
   initializeASTTransform(Registry);
   initializeClangTransform(Registry);
 #ifdef FLANG_FOUND
+  initializeFlangAnalysis(Registry);
   initializeFlangTransform(Registry);
 #endif
 #ifdef APC_FOUND

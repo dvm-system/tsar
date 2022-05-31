@@ -25,7 +25,7 @@ endif()
 
 if (FLANG_FOUND)
   set_property(TARGET TSARFrontendFlang TSARSupportFlang TSARTransformFlang
-    PROPERTY POSITION_INDEPENDENT_CODE ON)
+    TSARAnalysisFlang PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 add_library(TSARServer SHARED

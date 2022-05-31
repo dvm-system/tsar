@@ -40,7 +40,7 @@ endif()
 if(NOT PACKAGE_LLVM)
   if(Flang_FOUND)
     add_dependencies(TSARTool TSARTransformFlang TSARFrontendFlang
-      TSARSupportFlang)
+      TSARAnalysisFlang TSARSupportFlang)
   endif()
   add_dependencies(TSARTool
     TSARTransformAST
@@ -52,7 +52,7 @@ endif()
 
 if (FLANG_FOUND)
   target_link_libraries(TSARTool PRIVATE TSARTransformFlang TSARFrontendFlang
-    TSARSupportFlang)
+    TSARAnalysisFlang TSARSupportFlang)
 endif()
 
 target_link_libraries(TSARTool PRIVATE
