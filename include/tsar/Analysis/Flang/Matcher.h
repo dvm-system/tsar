@@ -1,8 +1,8 @@
-//===-- Matcher.h --------- High and Low Level Matcher (Clang) --*- C++ -*-===//
+//===-- Matcher.h --------- High and Low Level Matcher (Flang) --*- C++ -*-===//
 //
 //                       Traits Static Analyzer (SAPFOR)
 //
-// Copyright 2018 DVM System Group
+// Copyright 2022 DVM System Group
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,12 +25,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef TSAR_CLANG_MATCHER_H
-#define TSAR_CLANG_MATCHER_H
+#ifndef TSAR_FLANG_MATCHER_H
+#define TSAR_FLANG_MATCHER_H
 
 #include "tsar/Analysis/AST/Matcher.h"
-#include "tsar/Support/Clang/PresumedLocationInfo.h"
-#include <clang/Basic/SourceManager.h>
+#include "tsar/Support/Flang/PresumedLocationInfo.h"
+#include <flang/Parser/provenance.h>
 
 namespace tsar {
 /// This is a base class which is inherited to match different entities (loops,
@@ -38,19 +38,21 @@ namespace tsar {
 template <typename ImplTy, typename IRItemTy, typename ASTItemTy,
           typename IRLocationTy = llvm::DILocation *,
           typename IRLocationMapInfo = DILocationMapInfo,
-          typename RawLocationTy = unsigned,
+          typename RawLocationTy = std::size_t,
           typename RawLocationMapInfo = llvm::DenseMapInfo<RawLocationTy>,
           typename MatcherTy =
               Bimap<bcl::tagged<ASTItemTy, AST>, bcl::tagged<IRItemTy, IR>>,
           typename UnmatchedASTSetTy = llvm::DenseSet<ASTItemTy>>
-class ClangMatchASTBase
-    : public MatchASTBase<ImplTy, IRItemTy, ASTItemTy, clang::SourceLocation,
-                          IRLocationTy, IRLocationMapInfo, RawLocationTy,
-                          RawLocationMapInfo, MatcherTy, UnmatchedASTSetTy> {
+class FlangMatchASTBase
+    : public MatchASTBase<ImplTy, IRItemTy, ASTItemTy,
+                          Fortran::parser::Provenance, IRLocationTy,
+                          IRLocationMapInfo, RawLocationTy, RawLocationMapInfo,
+                          MatcherTy, UnmatchedASTSetTy> {
 
-  using BaseT = MatchASTBase<ImplTy, IRItemTy, ASTItemTy, clang::SourceLocation,
-                             IRLocationTy, IRLocationMapInfo, RawLocationTy,
-                             RawLocationMapInfo, MatcherTy, UnmatchedASTSetTy>;
+  using BaseT =
+      MatchASTBase<ImplTy, IRItemTy, ASTItemTy, Fortran::parser::Provenance,
+                   IRLocationTy, IRLocationMapInfo, RawLocationTy,
+                   RawLocationMapInfo, MatcherTy, UnmatchedASTSetTy>;
 
 public:
   using typename BaseT::LocToASTMap;
@@ -60,7 +62,7 @@ public:
 
   /// \brief Constructor.
   ///
-  /// \param[in] SrcMgr Clang source manager to deal with locations.
+  /// \param[in] AllCooked Flang source manager to deal with locations.
   /// \param[in, out] M Representation of match.
   /// \param[in, out] UM Storage for unmatched ast entities.
   /// \param[in, out] LocToIR Map from entity location to a queue
@@ -69,28 +71,31 @@ public:
   /// of AST entities. All entities explicitly (not implicit loops) defined in
   /// macros is going to store in this map. The key in this map is a raw
   /// encoding for expansion location.
-  ClangMatchASTBase(clang::SourceManager &SrcMgr, Matcher &M,
+  FlangMatchASTBase(Fortran::parser::AllCookedSources &AllCooked, Matcher &M,
                     UnmatchedASTSet &UM, LocToIRMap &LocToIR,
                     LocToASTMap &LocToMacro)
-      : BaseT(M, UM, LocToIR, LocToMacro), mSrcMgr(&SrcMgr) {}
+      : BaseT(M, UM, LocToIR, LocToMacro), mAllCooked(&AllCooked) {}
 
   /// Finds low-level representation of an entity at the specified location.
   ///
   /// \return Iterator to an element in LocToIRMap.
-  typename LocToIRMap::iterator findItrForLocation(clang::SourceLocation Loc) {
-    if (Loc.isInvalid())
+  typename LocToIRMap::iterator
+  findItrForLocation(Fortran::parser::Provenance Loc) {
+    if (!mAllCooked->allSources().IsValid(Loc))
       return BaseT::mLocToIR->end();
-    auto PLoc{mSrcMgr->getPresumedLoc(Loc, false)};
-    return BaseT::mLocToIR->find_as(PLoc);
+    auto PLoc{mAllCooked->allSources().GetSourcePosition(Loc)};
+    if (!PLoc)
+      return BaseT::mLocToIR->end();
+    return BaseT::mLocToIR->find_as(*PLoc);
   }
 
-  clang::PresumedLoc getPresumedLoc(RawLocationTy Loc) {
-    return mSrcMgr->getPresumedLoc(
-        clang::SourceLocation::getFromRawEncoding(Loc), false);
+  Fortran::parser::SourcePosition getPresumedLoc(RawLocationTy Loc) {
+    return *mAllCooked->allSources().GetSourcePosition(
+        Fortran::parser::Provenance{Loc});
   }
 
 protected:
-  clang::SourceManager *mSrcMgr;
+  Fortran::parser::AllCookedSources *mAllCooked;
 };
 } // namespace tsar
-#endif // TSAR_CLANG_MATCHER_H
+#endif // TSAR_FLANG_MATCHER_H

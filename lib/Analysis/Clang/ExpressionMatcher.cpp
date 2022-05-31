@@ -52,7 +52,7 @@ STATISTIC(NumNonMatchASTExpr, "Number of non-matched AST expressions");
 
 namespace {
 class MatchExprVisitor :
-  public MatchASTBase<Value *, DynTypedNode>,
+  public ClangMatchASTBase<MatchExprVisitor, Value *, DynTypedNode>,
   public RecursiveASTVisitor<MatchExprVisitor> {
 
   enum AccessKind : uint8_t {
@@ -64,7 +64,7 @@ class MatchExprVisitor :
 public:
   MatchExprVisitor(SourceManager &SrcMgr, Matcher &MM,
     UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
-      MatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
+      ClangMatchASTBase(SrcMgr, MM, Unmatched, LocMap, MacroMap) {}
 
   /// Evaluates declarations expanded from a macro and stores such
   /// declaration into location to macro map.
@@ -145,7 +145,7 @@ public:
     if (auto *SE{dyn_cast<ArraySubscriptExpr>(S)}) {
       {
         // We use scope to reload stash on exit.
-        StashParent [[maybe_unused]] Stash{S, mParents};
+        [[maybe_unused]] StashParent Stash{S, mParents};
         if (!RecursiveASTVisitor::TraverseStmt(S))
           return false;
       }
@@ -233,7 +233,6 @@ void ClangExprMatcherPass::print(raw_ostream &OS, const llvm::Module *M) const {
   if (mMatcher.empty() || !mTfmCtx || !mTfmCtx->hasInstance())
     return;
   auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
   auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
   for (auto &Match : mMatcher) {
     tsar::print(OS, cast<Instruction>(Match.get<IR>())->getDebugLoc(),
@@ -317,12 +316,12 @@ void ClangExprMatcherPass::getAnalysisUsage(AnalysisUsage &AU) const {
 char ClangExprMatcherPass::ID = 0;
 
 INITIALIZE_PASS_IN_GROUP_BEGIN(ClangExprMatcherPass, "clang-expr-matcher",
-  "High and Low Expression Matcher", false , true,
+  "High and Low Expression Matcher (Clang)", false , true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
   INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
   INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_IN_GROUP_END(ClangExprMatcherPass, "clang-expr-matcher",
-  "High and Low Level Expression Matcher", false, true,
+  "High and Low Level Expression Matcher (Clang)", false, true,
   DefaultQueryManager::PrintPassGroup::getPassRegistry())
 
 FunctionPass * llvm::createClangExprMatcherPass() {
