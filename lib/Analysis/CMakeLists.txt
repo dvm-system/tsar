@@ -32,6 +32,9 @@ tsar_tablegen(Attributes.gen -gen-tsar-attributes-defs
 add_dependencies(TSARAnalysis IntrinsicsGen AttributesGen)
 
 add_subdirectory(Clang)
+if(FLANG_FOUND)
+  add_subdirectory(Flang)
+endif()
 add_subdirectory(Memory)
 add_subdirectory(Reader)
 add_subdirectory(Parallel)
