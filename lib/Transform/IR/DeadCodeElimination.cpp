@@ -110,29 +110,36 @@ bool NoMetadataDSEPass::runOnFunction(Function &F) {
   // become unused after instruction elimination.
   for (auto &ASToStore : OnlyStores)
     for (auto *SI : ASToStore.second) {
-      SmallVector<Instruction *, 8> Worklist, HasUses, Visited;
+      SmallVector<Instruction *, 8> Worklist;
+      SmallPtrSet<Instruction *, 8> HasUses, Visited;
       for (auto &Op : SI->operands())
         if (auto *I = dyn_cast<Instruction>(&Op))
           if (!I->mayReadOrWriteMemory())
-            Worklist.push_back(I);
+            if (Visited.insert(I).second)
+              Worklist.push_back(I);
       SI->eraseFromParent();
       for (;;) {
+        bool IsChanged{false};
         while (!Worklist.empty()) {
           auto *Inst = Worklist.pop_back_val();
+          Visited.erase(Inst);
           if (Inst->getNumUses() > 0) {
-            HasUses.push_back(Inst);
+            HasUses.insert(Inst);
           } else {
             for (auto &Op : Inst->operands())
               if (auto *I = dyn_cast<Instruction>(&Op))
                 if (!I->mayReadOrWriteMemory())
-                  Worklist.push_back(I);
+                  if (Visited.insert(I).second)
+                    Worklist.push_back(I);
+            HasUses.erase(Inst);
             Inst->eraseFromParent();
+            IsChanged = true;
           }
         }
-        if (HasUses == Visited)
+        if (!IsChanged)
           break;
         Visited = HasUses;
-        std::swap(Worklist, HasUses);
+        Worklist.insert(Worklist.end(), HasUses.begin(), HasUses.end());
       }
     }
   return true;
