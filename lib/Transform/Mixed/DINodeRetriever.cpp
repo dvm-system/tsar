@@ -142,7 +142,7 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
     auto *DITy = createStubType(M, GlobalVar.getType()->getAddressSpace(), DIB);
     auto *GV = DIGlobalVariable::getDistinct(
       Ctx, File, Name, GlobalVar.getName(), File, Line, DITy,
-      GlobalVar.hasLocalLinkage(), GlobalVar.isDeclaration(),
+      GlobalVar.hasLocalLinkage(), !GlobalVar.isDeclaration(),
       nullptr, nullptr, 0, nullptr);
     auto *GVE =
       DIGlobalVariableExpression::get(Ctx, GV, DIExpression::get(Ctx, {}));
