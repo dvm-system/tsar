@@ -59,6 +59,7 @@ class Array {
   };
 public:
   using ExprList = llvm::SmallVector<const llvm::SCEV *, 4>;
+  using TypeList = llvm::SmallVector<const llvm::Type *, 4>;
 
   /// Map from linearized index of array to its delinearized representation.
   struct Range {
@@ -91,6 +92,10 @@ public:
     ///
     /// This is representation of offset (`Ptr-ArrayPtr`) after delinearization.
     ExprList Subscripts;
+
+    /// List of indexed GEP types, each type is a result of an application of
+    // a corresponding subscript.
+    TypeList Types;
 
     /// Creates element referenced with a specified pointer. Initial this
     /// element is not delinearized yet.
