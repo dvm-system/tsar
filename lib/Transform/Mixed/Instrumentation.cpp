@@ -821,8 +821,9 @@ Instrumentation::regMemoryAccessArgs(Value *Ptr, const DebugLoc &DbgLoc,
   Addr->setMetadata("sapfor.da", MD);
   auto DIVar = createPointerToDI(OpIdx, *DILoc);
   auto BasePtrTy = cast_or_null<PointerType>(BasePtr->getType());
+  auto PointeeTy{getPointerElementType(*BasePtr)};
   llvm::Instruction *ArrayBase =
-    ((BasePtrTy && isa<ArrayType>(BasePtrTy->getPointerElementType())) ||
+    ((PointeeTy && isa<ArrayType>(PointeeTy)) ||
      (isa<AllocaInst>(BasePtr) &&
       cast<AllocaInst>(BasePtr)->isArrayAllocation())) ?
       new BitCastInst(BasePtr, Type::getInt8PtrTy(Ctx),

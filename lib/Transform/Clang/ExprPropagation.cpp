@@ -842,7 +842,7 @@ bool ClangExprPropagation::unparseReplacement(
       if (MD && MD->isValid() && !MD->Template) {
         if (unparseToString(DWLang, *MD, DefStr, false)) {
           auto NumberOfDims = 1 + dimensionsNum(
-            cast<llvm::PointerType>(GEP->getType())->getPointerElementType());
+            cast<llvm::PointerType>(GEP->getSourceElementType()));
           for(; NumberOfDims > 0 && DefStr.size() > 3; --NumberOfDims) {
             auto Size = DefStr.size();
             if (DefStr[Size - 1] != ']' ||

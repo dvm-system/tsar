@@ -266,9 +266,8 @@ std::pair<MemoryLocationRange, bool> aggregate(
   }
   LLVM_DEBUG(dbgs() << "[AGGREGATE] Array info: " << *ArrayPtr->getBase() <<
       ", IsAddress: " << ArrayPtr->isAddressOfVariable() << ".\n");
-  auto BaseType = ArrayPtr->getBase()->getType();
-  auto ArrayType = cast<PointerType>(BaseType)->getPointerElementType();
-  if (ArrayPtr->isAddressOfVariable()) {
+  auto ArrayType{getPointerElementType(*ArrayPtr->getBase())};
+  if (!ArrayType || ArrayPtr->isAddressOfVariable()) {
     ResLoc.Kind = LocKind::NonCollapsable;
     return std::make_pair(ResLoc, true);
   }
