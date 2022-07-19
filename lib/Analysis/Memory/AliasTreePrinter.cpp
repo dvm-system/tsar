@@ -35,6 +35,14 @@ using namespace llvm;
 using namespace tsar;
 
 namespace llvm {
+/// TODO (kaniandr@gmail.com): it seems there is a bug in a new LLVM version,
+/// so mix of GraphT and GraphT * is used as a parameter fro DOTRgraphTraits.
+template <> struct DOTGraphTraits<AliasTree**> {
+  static std::string getGraphName(AliasTree **) {
+    return "Alias Tree";
+  }
+};
+
 template<> struct DOTGraphTraits<AliasTree *> :
     public DefaultDOTGraphTraits {
 
@@ -61,11 +69,7 @@ template<> struct DOTGraphTraits<AliasTree *> :
         printLocationSource(OS, Loc, &G->getDomTree());
         OS << (!EM.isExplicit() ? "*" : "") << ' ';
       } else if (EM.isAmbiguous()) {
-        OS << "Ambiguous, size ";
-        if (EM.getSize() == MemoryLocation::UnknownSize)
-          OS << "unknown";
-        else
-          OS << EM.getSize();
+        OS << "Ambiguous, size " << EM.getSize();
         OS << (EM.isExplicit() ? ", explicit" : ", implicit");
         OS << "\\l";
         for (auto Ptr : EM) {
@@ -81,11 +85,7 @@ template<> struct DOTGraphTraits<AliasTree *> :
           EM.front()->printAsOperand(OS);
         else
           EM.front()->print(OS, true);
-        OS << ", size ";
-        if (EM.getSize() == MemoryLocation::UnknownSize)
-          OS << "unknown";
-        else
-          OS << EM.getSize();
+        OS << ", size " << EM.getSize();
         OS << (EM.isExplicit() ? ", explicit" : ", implicit");
         OS << "\\l";
       }

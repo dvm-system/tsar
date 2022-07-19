@@ -39,6 +39,14 @@ using namespace llvm;
 using namespace tsar;
 
 namespace llvm {
+/// TODO (kaniandr@gmail.com): it seems there is a bug in a new LLVM version,
+/// so mix of GraphT and GraphT * is used as a parameter fro DOTRgraphTraits.
+template <> struct DOTGraphTraits<DIAliasTree**> {
+  static std::string getGraphName(DIAliasTree **) {
+    return "Alias Tree (Debug)";
+  }
+};
+
 template<> struct DOTGraphTraits<DIAliasTree *> :
   public DefaultDOTGraphTraits {
 
