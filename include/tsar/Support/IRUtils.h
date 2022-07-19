@@ -70,6 +70,9 @@ inline bool hasUnderlyingPointer(llvm::Type *Ty) {
   return false;
 }
 
+/// Try to reveal type of an opaque pointer.
+llvm::Type *getPointerElementType(const llvm::Value &V);
+
 /// Return true if a specified value points to the memory which is only
 /// available inside a specific loop.
 bool pointsToLocalMemory(const llvm::Value &V, const llvm::Loop &L);
