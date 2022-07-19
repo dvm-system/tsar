@@ -171,7 +171,9 @@ bool APCDistrLimitsChecker::runOnFunction(Function& F) {
       continue;
     if (auto *SI{dyn_cast<StoreInst>(&I)}) {
       // Check whether we remember pointer to an array element for further use.
-      if (auto *Op{SI->getValueOperand()}; Op->getType()->isPointerTy()) {
+      if (auto *Op{SI->getValueOperand()}; Op->getType()->isPointerTy() &&
+                                           !isa<ConstantPointerNull>(Op) &&
+                                           !isa<UndefValue>(Op)) {
         auto *EM{AT.find(MemoryLocation{Op, LocationSize::precise(1)})};
         assert(EM && "Estimate memory must be "
                      "presented in alias tree!");
