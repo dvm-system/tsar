@@ -41,7 +41,7 @@ void markIfNotPromoted(const DataLayout &DL, DIMemoryTrait &T) {
       continue;
     auto *AI = dyn_cast<AllocaInst>(stripPointer(DL, VH));
     if (!AI || AI->isArrayAllocation() ||
-      AI->getType()->getPointerElementType()->isArrayTy())
+      AI->getAllocatedType()->isArrayTy())
       continue;
     bool DbgDeclareFound = false;
     for (auto *U : FindDbgAddrUses(AI)) {

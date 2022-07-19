@@ -496,9 +496,11 @@ std::pair<bool, bool> isPure(const llvm::Function &F, const DefUseSet &DUS) {
       }) != inst_end(F))
     return std::pair{false, false};
   for (auto &Arg : F.args())
-    if (auto Ty = dyn_cast<PointerType>(Arg.getType()))
-      if (hasUnderlyingPointer(Ty->getPointerElementType()))
+    if (auto Ty = dyn_cast<PointerType>(Arg.getType())) {
+      auto PointeeTy{getPointerElementType(Arg)};
+      if (!PointeeTy || hasUnderlyingPointer(PointeeTy))
         return std::pair{false, false};
+    }
   auto &DL = F.getParent()->getDataLayout();
   bool HasGlobalAccess{false};
   for (auto &Range : DUS.getExplicitAccesses()) {

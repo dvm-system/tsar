@@ -185,21 +185,6 @@ createArrayType(const semantics::ArraySpec &ArrayShape,
                              DITy, DIB.getOrCreateArray(DISubranges));
 }
 
-static llvm::Type *getPointerElementType(Value &V) {
-  if (!isa<PointerType>(V.getType()))
-    return nullptr;
-  for (auto *U : V.users())
-    if (auto *LI{dyn_cast<LoadInst>(U)})
-      return LI->getType();
-    else if (auto *SI{dyn_cast<StoreInst>(U)})
-      return SI->getValueOperand()->getType();
-    else if (auto *GEP{dyn_cast<GetElementPtrInst>(U)})
-      return GEP->getSourceElementType();
-    else if (auto *Cast{dyn_cast<BitCastInst>(U)})
-      if (auto *T{getPointerElementType(*Cast)})
-        return T;
-}
-
 static void
 scheduleToEraseWithOperands(Instruction &I,
                             SmallPtrSetImpl<Instruction *> &Visited,

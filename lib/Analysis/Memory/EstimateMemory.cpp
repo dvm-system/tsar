@@ -120,10 +120,11 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
   assert(Loc.Ptr && "Pointer to memory location must not be null!");
   auto Ty = Loc.Ptr->getType();
   if (auto PtrTy = dyn_cast<PointerType>(Ty)) {
-    auto Size = PtrTy->getPointerElementType()->isSized()
+    auto *PointeeTy{getPointerElementType(*Loc.Ptr)};
+    auto Size = PointeeTy && PointeeTy->isSized()
                     ? LocationSize::precise(
-                          DL.getTypeStoreSize(PtrTy->getPointerElementType()))
-                    : LocationSize::afterPointer();
+                          DL.getTypeStoreSize(PointeeTy))
+                    : LocationSize::beforeOrAfterPointer();
     if (MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) > 0) {
       Loc.Size = Size;
       return true;
@@ -1088,10 +1089,9 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
         return;
     if (AccessedMemory.count(V))
       return;
-    auto PointeeTy = cast<PointerType>(V->getType())->getPointerElementType();
-    assert(PointeeTy && "Pointee type must not be null!");
+    auto PointeeTy{getPointerElementType(*V)};
     addLocation(MemoryLocation(
-        V, PointeeTy->isSized()
+        V, PointeeTy && PointeeTy->isSized()
                ? LocationSize::precise(DL.getTypeStoreSize(PointeeTy))
                : LocationSize::afterPointer()));
   };

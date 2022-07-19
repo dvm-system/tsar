@@ -126,7 +126,7 @@ static inline void insertDbgValueCall(ScalarizerContext &Ctx, Value *V,
 
 static void insertLoadInstructions(ScalarizerContext &Ctx) {
   auto PreheaderBB{Ctx.L->getLoopPreheader()};
-  auto *BeforeInstr{new LoadInst(Ctx.V->getType()->getPointerElementType(),
+  auto *BeforeInstr{new LoadInst(getPointerElementType(*Ctx.V),
                                  Ctx.V, "load." + Ctx.V->getName(),
                                  &PreheaderBB->back())};
   Ctx.InsertedLoad = BeforeInstr;
@@ -348,7 +348,7 @@ bool PointerScalarizerPass::runOnFunction(Function &F) {
               return isa<Instruction>(U) && L->contains(cast<Instruction>(U));
             }))
           continue;
-        if (Disabled.contains(V) || SingleV ||
+        if (Disabled.contains(V) || SingleV || !getPointerElementType(*V) ||
             (isa<Instruction>(V) && L->contains(cast<Instruction>(V))) ||
             [L, V]() {
               for (auto *BB : L->getBlocks())
