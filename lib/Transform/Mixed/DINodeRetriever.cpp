@@ -91,7 +91,7 @@ private:
         auto *DISub = F.getSubprogram();
         auto *DIVar = DILocalVariable::getDistinct(
             Ctx, DISub, "sapfor.var", FileCU, 0, DITy, 0,
-            DINode::FlagArtificial, AI->getAlignment(), nullptr);
+            DINode::FlagArtificial, AI->getAlign().value(), nullptr);
         DIB.insertDeclare(AI, DIVar, DIExpression::get(Ctx, {}),
             DILocation::get(AI->getContext(), 0, 0, DISub), AI->getParent());
       }
