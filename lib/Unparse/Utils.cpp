@@ -51,7 +51,10 @@ void printLocationSource(llvm::raw_ostream &O, const llvm::MemoryLocation &Loc,
   printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
   if (!Loc.Size.hasValue())
-    O << "?";
+    if (Loc.Size.mayBeBeforePointer())
+      O << "?";
+    else
+      O << "+?";
   else
     O << Loc.Size.getValue();
   O << ">";
@@ -63,12 +66,18 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   printLocationSource(O, Loc.Ptr, DT);
   O << ", ";
   if (!Loc.LowerBound.hasValue())
-    O << "?";
+    if (Loc.LowerBound.mayBeBeforePointer())
+      O << "?";
+    else
+      O << "+?";
   else
     O << Loc.LowerBound.getValue();
   O << ", ";
   if (!Loc.UpperBound.hasValue())
-    O << "?";
+    if (Loc.UpperBound.mayBeBeforePointer())
+      O << "?";
+    else
+      O << "+?";
   else
     O << Loc.UpperBound.getValue();
   if (!IsDebug) {
@@ -117,7 +126,10 @@ void printDILocationSource(unsigned DWLang,
   O << ", ";
   auto Size = Loc.getSize();
   if (!Size.hasValue())
-    O << "?";
+    if (Size.mayBeBeforePointer())
+      O << "?";
+    else
+      O << "+?";
   else
     O << Size.getValue();
   O << ">";
@@ -180,7 +192,10 @@ void printDILocationSource(unsigned DWLang,
     O << ", ";
     auto Size = TmpLoc.getSize();
     if (!Size.hasValue())
-      O << "?";
+      if (Size.mayBeBeforePointer())
+        O << "?";
+      else
+        O << "+?";
     else
       O << Size.getValue();
     O << ">";
