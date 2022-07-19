@@ -182,7 +182,8 @@ bool findGlobalMetadata(const GlobalVariable *Var,
       } else if (Expr->getNumElements() > 0) {
         continue;
       }
-      DILocs.emplace_back(DIExpr->getVariable(), DIExpr->getExpression());
+      DILocs.push_back(DIMemoryLocation::get(DIExpr->getVariable(),
+                                             DIExpr->getExpression()));
       IsChanged = true;
     }
   }
