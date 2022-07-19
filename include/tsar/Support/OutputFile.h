@@ -65,7 +65,7 @@ public:
   bool isCreateMssingDirectories() const noexcept {
     return mCreateMissingDirectories;
   }
-  bool useTemporary() const { return mTemp.hasValue(); }
+  bool useTemporary() const { return !mTemp.empty(); }
   llvm::StringRef getFilename() const { return mFilename; }
   llvm::raw_pwrite_stream &getStream() {
     assert(isValid() && "The file has been already cleared!");
@@ -73,7 +73,7 @@ public:
   }
   const llvm::sys::fs::TempFile & getTemporary() const {
      assert(useTemporary() && "Temporary file is not used!");
-     return *mTemp;
+    return mTemp.front();
   }
 
   bool isValid() const noexcept { return mOS != nullptr; }
@@ -87,12 +87,15 @@ private:
       : mFilename(Filename), mBinary(Binary),
         mRemoveFileOnSignal(RemoveFileOnSignal),
         mCreateMissingDirectories(CreateMissingDirectories),
-        mOS(std::move(OS)), mTemp(std::move(Temp)) {}
+        mOS(std::move(OS)) {
+    if (Temp)
+      mTemp.emplace_back(std::move(Temp.getValue()));
+  }
 
   bool mBinary{true};
   bool mRemoveFileOnSignal{true};
   bool mCreateMissingDirectories{true};
-  llvm::Optional<llvm::sys::fs::TempFile> mTemp;
+  llvm::SmallVector<llvm::sys::fs::TempFile, 1> mTemp;
   std::string mFilename;
   std::unique_ptr<llvm::raw_pwrite_stream> mOS;
 };
