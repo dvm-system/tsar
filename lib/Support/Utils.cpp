@@ -26,8 +26,9 @@
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/OutputFile.h"
-#include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/IntrinsicInst.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Support/Errc.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
@@ -124,6 +125,40 @@ bool pointsToLocalMemory(const Value &V, const Loop &L) {
           return true;
     }
   return false;
+}
+
+llvm::Type *getPointerElementType(const llvm::Value &V) {
+  if (!llvm::isa<llvm::PointerType>(V.getType()))
+    return nullptr;
+  if (auto *AI{llvm::dyn_cast<llvm::AllocaInst>(&V)})
+    return AI->getAllocatedType();
+  if (auto *GV{llvm::dyn_cast<llvm::GlobalValue>(&V)})
+    return GV->getValueType();
+  if (auto *GEP{llvm::dyn_cast<llvm::GEPOperator>(&V)})
+     return GEP->getResultElementType();
+  for (auto &U : V.uses()) {
+    if (auto *LI{llvm::dyn_cast<llvm::LoadInst>(U.getUser())})
+      return LI->getType();
+    if (auto *SI{llvm::dyn_cast<llvm::StoreInst>(U.getUser())}) {
+      if (SI->getPointerOperand() == U)
+        return SI->getValueOperand()->getType();
+      for (auto &U1 : SI->getPointerOperand()->uses())
+        if (auto *LI{llvm::dyn_cast<llvm::LoadInst>(U1.getUser())})
+          if (auto *PointeeTy{getPointerElementType(*LI)})
+            return PointeeTy;
+    }
+    if (auto *GEP{llvm::dyn_cast<llvm::GEPOperator>(U.getUser())})
+      if (GEP->getPointerOperand() == U)
+        return GEP->getSourceElementType();
+    if (auto *Cast{llvm::dyn_cast<llvm::BitCastOperator>(U.getUser())})
+      if (auto *T{getPointerElementType(*Cast)})
+        return T;
+    if (auto II{llvm::dyn_cast<llvm::IntrinsicInst>(U.getUser())})
+      if (II->isArgOperand(&U))
+        if (auto *T{II->getParamElementType(II->getArgOperandNo(&U))})
+          return T;
+  }
+  return nullptr;
 }
 
 llvm::DIType *createStubType(llvm::Module &M, unsigned int AS,
@@ -248,16 +283,18 @@ llvm::Error OutputFile::clear(StringRef WorkingDir, bool EraseFile) {
   mOS.reset();
   // Ignore errors that occur when trying to discard the temp file.
   if (EraseFile) {
-    if (mTemp)
-      consumeError(mTemp->discard());
+    if (useTemporary())
+      consumeError(mTemp.front().discard());
     if (!mFilename.empty())
       llvm::sys::fs::remove(mFilename);
+    mTemp.clear();
     return Error::success();
   }
-  if (!mTemp)
+  if (!useTemporary())
     return Error::success();
-  if (mTemp->TmpName.empty()) {
-    consumeError(mTemp->discard());
+  if (getTemporary().TmpName.empty()) {
+    consumeError(mTemp.front().discard());
+    mTemp.clear();
     return Error::success();
   }
   SmallString<128> NewOutFile{mFilename};
@@ -265,10 +302,13 @@ llvm::Error OutputFile::clear(StringRef WorkingDir, bool EraseFile) {
     NewOutFile = WorkingDir;
     llvm::sys::path::append(NewOutFile, mFilename);
   }
-  llvm::Error E = mTemp->keep(NewOutFile);
-  if (!E)
+  llvm::Error E = mTemp.front().keep(NewOutFile);
+  if (!E) {
+    mTemp.clear();
     return Error::success();
-  llvm::sys::fs::remove(mTemp->TmpName);
+  }
+  llvm::sys::fs::remove(getTemporary().TmpName);
+  mTemp.clear();
   return std::move(E);
 }
 }
