@@ -31,6 +31,7 @@
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/ASTDiagnostic.h>
 #include <clang/AST/ASTImporter.h>
+#include <clang/AST/ASTImportError.h>
 #include <clang/ASTMatchers/ASTMatchFinder.h>
 #include <clang/Basic/Diagnostic.h>
 #include <clang/Frontend/CompilerInstance.h>
@@ -91,7 +92,7 @@ public:
              clang::diag::err_redefinition_different_kind)
           << Name;
     }
-    return make_error<ImportError>(ImportError::NameConflict);
+    return make_error<ASTImportError>(ASTImportError::NameConflict);
   }
 
   void Imported(Decl *From, Decl *To) override {
