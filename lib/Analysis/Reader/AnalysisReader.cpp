@@ -484,9 +484,10 @@ bool AnalysisReader::runOnFunction(Function &F) {
       Var.get<Line>() = DefinitionLoc->getLine();
       Var.get<Column>() = DefinitionLoc->getColumn();
       SmallString<32> LocToString;
-      DIMemoryLocation TmpLoc{ const_cast<DIVariable *>(DIEM->getVariable()),
-                              const_cast<DIExpression *>(DIEM->getExpression()),
-                              DefinitionLoc, DIEM->isTemplate() };
+      auto TmpLoc{DIMemoryLocation::get(
+          const_cast<DIVariable *>(DIEM->getVariable()),
+          const_cast<DIExpression *>(DIEM->getExpression()), DefinitionLoc,
+          DIEM->isTemplate(), DIEM->isAfterPointer())};
       if (!unparseToString(*DWLang, TmpLoc, LocToString))
         continue;
       std::replace(LocToString.begin(), LocToString.end(), '*', '^');

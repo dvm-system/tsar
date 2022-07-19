@@ -238,6 +238,10 @@ std::unique_ptr<DIEstimateMemory> DIEstimateMemory::get(
     ArrayRef<DILocation *> DbgLocs) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
+  auto DILoc{DIMemoryLocation::get(Var, Expr, nullptr, F & Template,
+                                   F & AfterPointer)};
+  if (DILoc.AfterPointer)
+    F |= AfterPointer;
   auto *FlagMD = llvm::ConstantAsMetadata::get(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
   SmallVector<Metadata *, 3> BasicMDs{ Var, Expr, FlagMD};
@@ -270,6 +274,10 @@ llvm::MDNode * DIEstimateMemory::getRawIfExists(llvm::LLVMContext &Ctx,
     ArrayRef<DILocation *> DbgLocs) {
   assert(Var && "Variable must not be null!");
   assert(Expr && "Expression must not be null!");
+  auto DILoc{DIMemoryLocation::get(Var, Expr, nullptr, F & Template,
+                                   F & AfterPointer)};
+  if (DILoc.AfterPointer)
+    F |= AfterPointer;
   auto *FlagMD = llvm::ConstantAsMetadata::getIfExists(
     llvm::ConstantInt::get(Type::getInt16Ty(Ctx), F));
   if (!FlagMD)
@@ -993,7 +1001,7 @@ public:
     auto DIEmptyExpr = DIExpression::get(*mContext, {});
     if (mSortedFragments.front()->getNumElements() == 0) {
       auto DIMVar = DIEstimateMemory::get(*mContext, *mEnv, mVar, DIEmptyExpr,
-        DIEstimateMemory::NoFlags, mDbgLocs);
+        DIEstimateMemory::AfterPointer, mDbgLocs);
       auto IsCorruptedRoot = mCMR->isCorrupted(DIMVar->getBaseAsMDNode());
       if (IsCorruptedRoot.first) {
         if (IsCorruptedRoot.second)
@@ -1004,7 +1012,8 @@ public:
       LLVM_DEBUG(addFragmentLog(DIEmptyExpr));
       auto DIM = mDIAT->addNewNode(std::move(DIMVar), *Parent);
       assert(!DIM.second && "Memory location is already attached to a node!");
-      if (auto M = mCMR->beforePromotion(DIMemoryLocation(mVar, DIEmptyExpr)))
+      if (auto M =
+              mCMR->beforePromotion(DIMemoryLocation::get(mVar, DIEmptyExpr)))
         M->replaceAllUsesWith(&*DIM.first);
       DIM.first->setProperties(DIMemory::Explicit);
       return;
@@ -1024,7 +1033,7 @@ private:
   void addFragmentLog(llvm::DIExpression *Expr) {
     dbgs() << "[DI ALIAS TREE]: add a new node and a new fragment ";
     auto DWLang = getLanguage(mDIAT->getFunction()).getValue();
-    printDILocationSource(DWLang, { mVar, Expr }, dbgs());
+    printDILocationSource(DWLang, DIMemoryLocation::get(mVar, Expr), dbgs());
     dbgs() << "\n";
   }
 #endif
@@ -1044,7 +1053,7 @@ private:
         *Parent);
       assert(!DIM.second && "Memory location is already attached to a node!");
       if (auto M = mCMR->beforePromotion(
-            DIMemoryLocation(mVar, mSortedFragments[I])))
+            DIMemoryLocation::get(mVar, mSortedFragments[I])))
         M->replaceAllUsesWith(&*DIM.first);
       DIM.first->setProperties(DIMemory::Explicit);
     }
@@ -1054,7 +1063,7 @@ private:
   /// fragment (`mVar`, `Expr`) if this is necessary.
   DIAliasNode * addUnknownParentIfNecessary(
       DIAliasNode *Parent, DIExpression *Expr) {
-    auto *Corrupted = mCMR->hasUnknownParent(DIMemoryLocation(mVar, Expr));
+    auto *Corrupted = mCMR->hasUnknownParent(DIMemoryLocation::get(mVar, Expr));
     if (!Corrupted)
       return Parent;
     Corrupted->erase(
@@ -1584,7 +1593,7 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
       if (VarFragments == mVarToFragments.end())
         continue;
       for (auto *EraseExpr : VarFragments->get<DIExpression>())
-        mSmallestFragments.erase(DIMemoryLocation{ Loc.Var, EraseExpr });
+        mSmallestFragments.erase(DIMemoryLocation::get(Loc.Var, EraseExpr));
       VarFragments->get<DIExpression>().clear();
       continue;
     }
@@ -1619,7 +1628,7 @@ void CorruptedMemoryResolver::findNoAliasFragments() {
       for (auto *Expr : VarFragments.first->get<DIExpression>()) {
         if (mayAliasFragments(*Expr, *Loc.Expr)) {
           for (auto *EraseExpr : VarFragments.first->get<DIExpression>())
-            mSmallestFragments.erase(DIMemoryLocation{ Loc.Var, EraseExpr });
+            mSmallestFragments.erase(DIMemoryLocation::get(Loc.Var, EraseExpr));
           VarFragments.first->get<DIExpression>().clear();
           return true;
         }
@@ -1867,8 +1876,9 @@ void CorruptedMemoryResolver::updateWorkLists(
     LLVM_DEBUG(checkLog(M));
     auto Binding = M.getBinding();
     if (auto *DIEM = dyn_cast<DIEstimateMemory>(&M)) {
-      DIMemoryLocation Loc(
-        DIEM->getVariable(), DIEM->getExpression(), nullptr, DIEM->isTemplate());
+      auto Loc{DIMemoryLocation::get(DIEM->getVariable(), DIEM->getExpression(),
+                                     nullptr, DIEM->isTemplate(),
+                                     DIEM->isAfterPointer())};
       auto FragmentItr = mSmallestFragments.find(Loc);
       if (FragmentItr != mSmallestFragments.end()) {
         if (Binding == DIMemory::Destroyed ||
@@ -2145,7 +2155,8 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
   SmallVector<uint64_t, 8> Expr(ReverseExpr.rbegin(), ReverseExpr.rend());
   if (Expr.empty()) {
     auto DIE = DIExpression::get(Ctx, Expr);
-    DIMemoryLocation DIL(DIInfo.first, DIE, DIInfo.second, IsTemplate);
+    auto DIL{DIMemoryLocation::get(DIInfo.first, DIE, DIInfo.second, IsTemplate,
+                                   !Loc.Size.mayBeBeforePointer())};
     // If expression is empty and  size can be obtained from a variable than
     // DW_OP_LLVM_fragment should not be added. If variable will be promoted it
     // will be represented without this size. So there will be different
@@ -2182,13 +2193,16 @@ Optional<DIMemoryLocation> buildDIMemory(const MemoryLocation &Loc,
       Expr.append({ dwarf::DW_OP_LLVM_fragment, 0, 0 });
   }
   auto DIE = DIExpression::get(Ctx, Expr);
-  return DIMemoryLocation(DIInfo.first, DIE, DIInfo.second, IsTemplate);
+  return DIMemoryLocation::get(DIInfo.first, DIE, DIInfo.second, IsTemplate,
+                               !Loc.Size.mayBeBeforePointer());
 }
 
 llvm::MDNode * getRawDIMemoryIfExists(llvm::LLVMContext &Ctx,
     DIMemoryLocation DILoc) {
   auto F = DILoc.Template ?
     DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+  if (DILoc.AfterPointer)
+    F |= DIEstimateMemory::AfterPointer;
   SmallVector<DILocation *, 1> Dbgs;
   if (DILoc.Loc)
     Dbgs.push_back(DILoc.Loc);
@@ -2218,6 +2232,8 @@ std::unique_ptr<DIMemory> buildDIMemoryWithNewSize(const EstimateMemory &EM,
   } else {
     auto Flags = DILoc->Template ?
       DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+    if (DILoc->AfterPointer)
+      Flags |= DIEstimateMemory::AfterPointer;
     SmallVector<DILocation *, 1> Dbgs;
     for (auto *V : EM)
       if (auto *I = dyn_cast_or_null<Instruction>(V))
@@ -2245,6 +2261,8 @@ llvm::MDNode * getRawDIMemoryIfExists(const EstimateMemory &EM,
   } else {
     auto Flags = DILoc->Template ?
       DIEstimateMemory::Template : DIEstimateMemory::NoFlags;
+    if (DILoc->AfterPointer)
+      Flags |= DIEstimateMemory::AfterPointer;
     SmallVector<DILocation *, 1> Dbgs;
     for (auto *V : EM)
       if (auto *I = dyn_cast_or_null<Instruction>(V))

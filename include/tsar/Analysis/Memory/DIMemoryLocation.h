@@ -74,6 +74,7 @@ struct DIMemoryLocation {
   llvm::DIExpression *Expr = nullptr;
   llvm::DILocation *Loc = nullptr;
   bool Template = false;
+  bool AfterPointer = false;
 
   /// Determines which memory location is exhibits by a specified instruction.
   static DIMemoryLocation get(llvm::DbgVariableIntrinsic *Inst);
@@ -84,17 +85,20 @@ struct DIMemoryLocation {
     if (auto I = llvm::dyn_cast<llvm::DbgValueInst>(Inst))
       return get(I);
     llvm_unreachable("Unsupported memory instruction!");
+    return DIMemoryLocation{nullptr, nullptr};
   }
 
   /// Constructs a new memory location. Note, that variable and expression
   /// must not be null).
-  DIMemoryLocation(llvm::DIVariable *Var, llvm::DIExpression *Expr,
-      llvm::DILocation *Loc = nullptr, bool Template = false) :
-      Var(Var), Expr(Expr), Loc(Loc), Template(Template) {
-    // Do not check here that location isValid() because this leads to crash
-    // of construction of empty key in specialization of llvm::DenseMapInfo.
-    assert(Var && "Variable must not be null!");
-    assert(Expr && "Expression must not be null!");
+  static inline DIMemoryLocation get(llvm::DIVariable *Var,
+                                     llvm::DIExpression *Expr,
+                                     llvm::DILocation *Loc = nullptr,
+                                     bool Template = false,
+                                     bool AfterPointer = false) {
+    DIMemoryLocation DILoc{Var, Expr, Loc, Template, AfterPointer};
+    if (!DILoc.getSize().mayBeBeforePointer())
+      DILoc.AfterPointer = true;
+    return DILoc;
   }
 
   /// If DW_OP_deref exists it returns true.
@@ -130,6 +134,22 @@ struct DIMemoryLocation {
   /// Checks that representation of memory location is valid (the focus is on
   /// the expression.
   bool isValid() const;
+
+private:
+  friend struct llvm::DenseMapInfo<DIMemoryLocation>;
+
+  /// Constructs a new memory location. Note, that variable and expression
+  /// must not be null).
+  DIMemoryLocation(llvm::DIVariable *Var, llvm::DIExpression *Expr,
+                   llvm::DILocation *Loc = nullptr, bool Template = false,
+                   bool AfterPointer = false)
+      : Var(Var), Expr(Expr), Loc(Loc), Template(Template),
+        AfterPointer(AfterPointer) {
+    // Do not check here that location isValid() because this leads to crash
+    // of construction of empty key in specialization of llvm::DenseMapInfo.
+    assert(Var && "Variable must not be null!");
+    assert(Expr && "Expression must not be null!");
+  }
 };
 
 inline bool operator==(DIMemoryLocation LHS, DIMemoryLocation RHS) noexcept {
@@ -160,7 +180,8 @@ template<> struct DenseMapInfo<tsar::DIMemoryLocation> {
       const tsar::DIMemoryLocation &LHS, const tsar::DIMemoryLocation &RHS) {
     return LHS.Var == RHS.Var &&
       LHS.Expr == RHS.Expr &&
-      LHS.Template == RHS.Template;
+      LHS.Template == RHS.Template &&
+      LHS.AfterPointer == RHS.AfterPointer;
   }
 };
 }

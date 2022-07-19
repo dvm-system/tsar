@@ -280,7 +280,8 @@ public:
   enum Flags : uint16_t {
     NoFlags = 0,
     Template = 1u << 0,
-    LLVM_MARK_AS_BITMASK_ENUM(Template)
+    AfterPointer = 1u << 1,
+    LLVM_MARK_AS_BITMASK_ENUM(AfterPointer)
   };
 
   /// Methods for support type inquiry through isa, cast, and dyn_cast.
@@ -334,23 +335,31 @@ public:
   /// (see DIMemoryLocation for details).
   bool isTemplate() const { return Template & getFlags(); }
 
+  /// Return true if this memory location represents a location after a base
+  /// pointer.
+  bool isAfterPointer() const { return AfterPointer & getFlags(); }
+
   /// Returns true if size is known.
   bool isSized() const {
-    return DIMemoryLocation(
-      const_cast<llvm::DIVariable *>(getVariable()),
-      const_cast<llvm::DIExpression *>(getExpression())).isSized();
+    return DIMemoryLocation::get(
+               const_cast<llvm::DIVariable *>(getVariable()),
+               const_cast<llvm::DIExpression *>(getExpression()), nullptr,
+               isTemplate(), isAfterPointer())
+        .isSized();
   }
 
   /// Return size of location, in address units, if it is known.
   llvm::LocationSize getSize() const {
-    return DIMemoryLocation(
-      const_cast<llvm::DIVariable *>(getVariable()),
-      const_cast<llvm::DIExpression *>(getExpression())).getSize();
+    return DIMemoryLocation::get(
+               const_cast<llvm::DIVariable *>(getVariable()),
+               const_cast<llvm::DIExpression *>(getExpression()), nullptr,
+               isTemplate(), isAfterPointer())
+        .getSize();
   }
 
   /// If DW_OP_deref exists it returns true.
   bool hasDeref() const {
-    return DIMemoryLocation(
+    return DIMemoryLocation::get(
       const_cast<llvm::DIVariable *>(getVariable()),
       const_cast<llvm::DIExpression *>(getExpression())).hasDeref();
   }

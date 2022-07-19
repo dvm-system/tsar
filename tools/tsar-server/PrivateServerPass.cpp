@@ -1630,10 +1630,11 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
                   getLocation(VD->getLocation(), SrcMgr);
               }
             }
-            DIMemoryLocation TmpLoc{
+            auto TmpLoc{DIMemoryLocation::get(
                 const_cast<DIVariable *>(ClonedDIEM->getVariable()),
                 const_cast<DIExpression *>(ClonedDIEM->getExpression()),
-                nullptr, ClonedDIEM->isTemplate() };
+                nullptr, ClonedDIEM->isTemplate(),
+                ClonedDIEM->isAfterPointer())};
             if (!TmpLoc.isValid()) {
               AddressOS << "sapfor.invalid";
             } else {
