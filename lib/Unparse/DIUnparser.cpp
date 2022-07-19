@@ -132,6 +132,8 @@ bool DIUnparser::unparse(const Value *Expr, SmallVectorImpl<char> &Str) {
     mIsDITypeEnd =
       !isa<DICompositeType>(mDIType) && !isa<DIDerivedType>(mDIType);
     auto Name = DILoc->Var->getName();
+    if (Name.empty())
+      Name = "sapfor.null";
     Str.append(Name.begin(), Name.end());
   }
   return Result;
