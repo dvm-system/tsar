@@ -100,21 +100,29 @@ bool pointsToLocalMemory(const Value &V, const Loop &L) {
   if (!isa<AllocaInst>(V))
     return false;
   bool StartInLoop{false}, EndInLoop{false};
+  auto approveLocal = [&L, &StartInLoop, &EndInLoop](auto *V) {
+    if (auto *II{dyn_cast<IntrinsicInst>(V)}) {
+      auto *BB{II->getParent()};
+      if (L.contains(BB)) {
+        auto ID{II->getIntrinsicID()};
+        if (!StartInLoop && ID == llvm::Intrinsic::lifetime_start)
+          StartInLoop = true;
+        else if (!EndInLoop && ID == llvm::Intrinsic::lifetime_end)
+          EndInLoop = true;
+        if (StartInLoop && EndInLoop)
+          return true;
+      }
+    }
+    return false;
+  };
   for (auto *V1 : V.users())
-    if (auto *BC{dyn_cast<BitCastInst>(V1)})
+    if (approveLocal(V1)) {
+      return true;
+    } else if (auto *BC{dyn_cast<BitCastInst>(V1)}) {
       for (auto *V2 : BC->users())
-        if (auto *II{dyn_cast<IntrinsicInst>(V2)}) {
-          auto *BB{II->getParent()};
-          if (L.contains(BB)) {
-            auto ID{II->getIntrinsicID()};
-            if (!StartInLoop && ID == llvm::Intrinsic::lifetime_start)
-              StartInLoop = true;
-            else if (!EndInLoop && ID == llvm::Intrinsic::lifetime_end)
-              EndInLoop = true;
-            if (StartInLoop && EndInLoop)
-              return true;
-          }
-        }
+        if (approveLocal(V2))
+          return true;
+    }
   return false;
 }
 
