@@ -58,7 +58,7 @@ namespace tsar {
 /// - static inline uint64_t getNumDims(const LocationTy &)
 ///     Return a number of dimensions of a specified location.
 /// - static inline bool areJoinable(const LocationTy &, const LocationTy &)
-///     Return `true` if one location can be joined to another, `false` 
+///     Return `true` if one location can be joined to another, `false`
 ///     otherwise.
 /// - static inline bool join(const LocationTy &What, LocationTy &To)
 ///     Join `What` location to `To` if they are joinable.
@@ -104,8 +104,13 @@ template<> struct MemorySetInfo<llvm::MemoryLocation> {
     Loc.Size = Size;
   }
   static inline int8_t sizecmp(llvm::LocationSize LHS, llvm::LocationSize RHS) {
-    if (LHS == RHS || !LHS.hasValue() && !RHS.hasValue())
+    if (LHS == RHS)
       return 0;
+    if (!LHS.hasValue() && !RHS.hasValue()) {
+      if (LHS.mayBeBeforePointer())
+        return 1;
+      return -1;
+    }
     if (!LHS.hasValue())
       return 1;
     if (!RHS.hasValue())
