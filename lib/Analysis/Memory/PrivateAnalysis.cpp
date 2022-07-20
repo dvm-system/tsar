@@ -1009,7 +1009,7 @@ void PrivateRecognitionPass::resolveAddresses(DFLoop *L,
   for (auto *Unknown : DefUse.getAddressUnknowns()) {
     /// Is it safe to ignore intrinsics here? It seems that all intrinsics in
     /// LLVM does not use addresses to perform  computations instead of
-    /// memory accesses.
+    /// memory accesses. We also ignore intrinsics in DefinedMemoryPass.
     if (isa<IntrinsicInst>(Unknown))
       continue;
     const auto *N = mAliasTree->findUnknown(Unknown);
