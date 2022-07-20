@@ -1106,6 +1106,8 @@ static EstimateMemoryTrait *mayIgnoreDereference(AliasTrait &Trait,
       const EstimateMemory *Ptr = Tree.find(MemoryLocation::get(LI));
       assert(Ptr && "Estimate memory location must not be null!");
       auto Itr = DS.find_as(Ptr->getAliasNode(Tree));
+      if (Itr == DS.end())
+        return nullptr;
       if (Itr->is<trait::Private>())
         continue;
       return nullptr;
@@ -1441,14 +1443,7 @@ public:
            T.is<trait::NoAccess>() ||
           std::is_same<Trait, trait::AddressAccess>::value && !T.is<Trait>())
         continue;
-      OS << "<";
-      printLocationSource(OS, T.getMemory()->front(), mDT);
-      OS << ", ";
-      if (!T.getMemory()->getSize().hasValue())
-        OS << "?";
-      else
-        OS << T.getMemory()->getSize().getValue();
-      OS << ">";
+      printLocationSource(OS, *T.getMemory(), mDT);
       traitToStr(T.get<Trait>(), OS);
       OS << " ";
     }
