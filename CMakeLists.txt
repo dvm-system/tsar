@@ -236,17 +236,18 @@ if(FLANG_FOUND)
     flangFrontend FortranLower FortranSemantics FortranEvaluate FortranParser
     FortranDecimal FortranCommon FIRCodeGen FIRTransforms FIRBuilder
     FIRDialect FIRSupport MLIROpenMPToLLVM MLIROpenMPToLLVMIRTranslation
-    MLIRLLVMToLLVMIRTranslation MLIROpenACC MLIROpenMP MLIRSCFToControlFlow
-    MLIRFuncToLLVM MLIRArithmeticToLLVM MLIRControlFlowToLLVM
-    MLIRTargetLLVMIRExport MLIRDLTI MLIRLLVMIRTransforms MLIRMemRefToLLVM
-    MLIRParser MLIRSCF MLIRBufferization MLIRAffine MLIRVector MLIRMemRef
-    MLIRVectorInterfaces MLIRLLVMCommonConversion MLIRTransforms MLIRLLVMIR
-    MLIRFunc MLIRControlFlow MLIRTensor MLIRArithmeticUtils MLIRComplex
-    MLIRArithmetic MLIRDialectUtils MLIRTransformUtils MLIRRewrite
-    MLIRPDLToPDLInterp MLIRPDLInterp MLIRPDL MLIRPass MLIRAnalysis
+    MLIRLLVMToLLVMIRTranslation MLIROpenACCDialect MLIROpenMPDialect
+    MLIRSCFToControlFlow MLIRFuncToLLVM MLIRArithmeticToLLVM MLIRControlFlowToLLVM
+    MLIRTargetLLVMIRExport MLIRDLTIDialect MLIRLLVMIRTransforms MLIRMemRefToLLVM
+    MLIRParser MLIRSCFDialect MLIRBufferizationDialect MLIRAffineDialect
+    MLIRVectorDialect MLIRMemRefDialect MLIRVectorInterfaces MLIRLLVMCommonConversion
+    MLIRTransforms MLIRLLVMDialect MLIRFuncDialect MLIRControlFlowDialect
+    MLIRTensorDialect MLIRArithmeticUtils MLIRComplexDialect
+    MLIRArithmeticDialect MLIRDialectUtils MLIRTransformUtils MLIRRewrite
+    MLIRPDLToPDLInterp MLIRPDLInterpDialect MLIRPDLDialect MLIRPass MLIRAnalysis
     MLIRCallInterfaces MLIRControlFlowInterfaces MLIRInferTypeOpInterface
     MLIRSideEffectInterfaces MLIRDataLayoutInterfaces MLIRViewLikeInterface
-    MLIRIR MLIRSupport)
+    MLIRInferIntRangeInterface MLIRIR MLIRSupport)
   include(TestBigEndian)
   test_big_endian(IS_BIGENDIAN)
   if (IS_BIGENDIAN)
@@ -275,6 +276,7 @@ if(NOT PACKAGE_LLVM AND FLANG_FOUND)
   target_include_directories(obj.flangFrontend SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_include_directories(obj.flangFrontendTool SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_include_directories(obj.FortranLower SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+  target_include_directories(obj.FortranEvaluate SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
   target_include_directories(flang-new SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 endif()
 include_directories(${LLVM_INCLUDE_DIRS})
