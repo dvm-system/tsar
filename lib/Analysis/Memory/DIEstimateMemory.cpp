@@ -28,6 +28,7 @@
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
 #include "tsar/Analysis/Memory/DIMemoryLocation.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/MemorySetInfo.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Utils.h"
@@ -60,8 +61,9 @@ STATISTIC(NumUnknownMemory, "Number of unknown memory created");
 STATISTIC(NumCorruptedMemory, "Number of corrupted memory created");
 
 namespace tsar {
-void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
+bool findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     SmallPtrSetImpl<AliasNode *> &Nodes) {
+  bool IsOk{false};
   for (auto &VH : DIEM) {
     if (!VH || isa<llvm::UndefValue>(VH))
       continue;
@@ -70,12 +72,36 @@ void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     // the alias tree.
     if (!EM)
       continue;
+    IsOk = true;
     Nodes.insert(EM->getAliasNode(AT));
   }
+  return IsOk;
 }
 
-void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
+bool findLowerBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
+                              llvm::SmallPtrSetImpl<AliasNode *> &Nodes) {
+  bool IsOk{false};
+  auto Size{DIEM.getSize()};
+  for (auto &VH : DIEM) {
+    if (!VH || isa<llvm::UndefValue>(VH))
+      continue;
+    auto EM = AT.find(MemoryLocation(VH, 0));
+    // Memory becomes unused after transformation and does not presented in
+    // the alias tree.
+    using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
+    for (;
+         EM && MemorySetInfo<MemoryLocation>::sizecmp(Size, EM->getSize()) > 0;
+         EM = CT::getNext(EM)) {
+      IsOk = true;
+      Nodes.insert(EM->getAliasNode(AT));
+    }
+  }
+  return IsOk;
+}
+
+bool findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
     SmallPtrSetImpl<AliasNode *> &Nodes) {
+  bool IsOk{false};
   for (auto &VH : DIUM) {
     if (!VH || isa<UndefValue>(*VH))
       continue;
@@ -83,26 +109,28 @@ void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
     if (auto Inst = dyn_cast<Instruction>(VH))
       if (auto *N = AT.findUnknown(cast<Instruction>(*VH))) {
         Nodes.insert(N);
-        return;
+        return true;
       }
     auto EM = AT.find(MemoryLocation(VH, 0));
     // Memory becomes unused after transformation and does not presented in
     // the alias tree.
     if (!EM)
       continue;
+    IsOk = true;
     using CT = bcl::ChainTraits<EstimateMemory, Hierarchy>;
     do {
       Nodes.insert(EM->getAliasNode(AT));
     } while (EM = CT::getNext(EM));
   }
+  return IsOk;
 }
 
-void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
+bool findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
     SmallPtrSetImpl<AliasNode *> &Nodes) {
   if (auto *EM = dyn_cast<DIEstimateMemory>(&DIM))
-    findBoundAliasNodes(*EM, AT, Nodes);
+    return findBoundAliasNodes(*EM, AT, Nodes);
   else
-    findBoundAliasNodes(cast<DIUnknownMemory>(DIM), AT, Nodes);
+    return findBoundAliasNodes(cast<DIUnknownMemory>(DIM), AT, Nodes);
 }
 }
 
@@ -1909,7 +1937,9 @@ void CorruptedMemoryResolver::updateWorkLists(
     } else {
       isSameAfterRebuild(cast<DIUnknownMemory>(M), Replacement);
     }
-    findBoundAliasNodes(M, *mAT, Info.NodesWL);
+    if (!findBoundAliasNodes(M, *mAT, Info.NodesWL) &&
+        isa<DIEstimateMemory>(M) && Binding != DIMemory::Empty)
+      findLowerBoundAliasNodes(cast<DIEstimateMemory>(M), *mAT, Info.NodesWL);
   }
   replaceAllMemoryUses(Replacement, Info);
 }
