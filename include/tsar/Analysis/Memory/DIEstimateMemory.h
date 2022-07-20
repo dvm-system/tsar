@@ -80,17 +80,22 @@ LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 
 /// Finds alias nodes which contains memory locations which is bound
 /// to a specified debug memory location.
-void findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
+bool findBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
 
 /// Finds alias nodes which contains memory locations which is bound
 /// to a specified debug memory location.
-void findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
+bool findBoundAliasNodes(const DIUnknownMemory &DIUM, AliasTree &AT,
     llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
 
 /// Finds alias nodes which contains memory locations which is bound
 /// to a specified debug memory location.
-void findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
+bool findBoundAliasNodes(const DIMemory &DIM, AliasTree &AT,
+    llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
+
+/// Finds alias nodes which contains memory locations which is bound
+/// to a specified debug memory location but have lower sizes.
+bool findLowerBoundAliasNodes(const DIEstimateMemory &DIEM, AliasTree &AT,
     llvm::SmallPtrSetImpl<AliasNode *> &Nodes);
 
 /// This represents estimate memory location using metadata information.
