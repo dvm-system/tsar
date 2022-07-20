@@ -435,22 +435,30 @@ public:
           addMust(ALoc);
         } else if (AR.template is<trait::ContainedAlias>()) {
           int64_t OffsetLoc, OffsetALoc;
-          GetPointerBaseWithConstantOffset(mLoc.Ptr, OffsetLoc, this->mDL);
-          GetPointerBaseWithConstantOffset(ALoc.Ptr, OffsetALoc, this->mDL);
-          // Base - OffsetLoc --------------|mLoc.Ptr| --- mLoc.Size --- |
-          // Base - OffsetALoc -|ALoc.Ptr| ---- ALoc.Size -------------------- |
-          //--------------------|ALoc.Ptr|--| ------ addMust(...) ------ |
-          auto UpperBound =
-              mLoc.Size.isPrecise()
-                  ? LocationSize::precise(
-                      OffsetLoc - OffsetALoc + mLoc.Size.getValue())
-                  : mLoc.Size.hasValue()
-                        ? LocationSize::upperBound(
-                            OffsetLoc - OffsetALoc + mLoc.Size.getValue())
-                        : LocationSize::afterPointer();
-          MemoryLocationRange Range(ALoc.Ptr,
-            LocationSize::precise(OffsetLoc - OffsetALoc),
-            UpperBound, ALoc.AATags);
+          auto BaseLoc{
+              GetPointerBaseWithConstantOffset(mLoc.Ptr, OffsetLoc, this->mDL)};
+          auto BaseALoc{GetPointerBaseWithConstantOffset(ALoc.Ptr, OffsetALoc,
+                                                         this->mDL)};
+          MemoryLocationRange Range;
+          if (BaseLoc == BaseALoc) {
+            // Base - OffsetLoc --------------|mLoc.Ptr| --- mLoc.Size --- |
+            // Base - OffsetALoc -|ALoc.Ptr| ---- ALoc.Size --------------------
+            // |
+            //--------------------|ALoc.Ptr|--| ------ addMust(...) ------ |
+            auto UpperBound =
+                mLoc.Size.isPrecise()
+                    ? LocationSize::precise(OffsetLoc - OffsetALoc +
+                                            mLoc.Size.getValue())
+                : mLoc.Size.hasValue()
+                    ? LocationSize::upperBound(OffsetLoc - OffsetALoc +
+                                               mLoc.Size.getValue())
+                    : mLoc.Size;
+            Range = MemoryLocationRange{
+                ALoc.Ptr, LocationSize::precise(OffsetLoc - OffsetALoc),
+                UpperBound, ALoc.AATags};
+          } else {
+            Range = MemoryLocationRange{ALoc.Ptr, 0, mLoc.Size , ALoc.AATags};
+          }
           if (this->mDU.hasDef(Range))
             continue;
           addMust(Range);
