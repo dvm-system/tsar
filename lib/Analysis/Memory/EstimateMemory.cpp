@@ -26,6 +26,7 @@
 #include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/MemorySetInfo.h"
+#include "tsar/Support/IRUtils.h"
 #include "tsar/Unparse/Utils.h"
 #include <llvm/ADT/Statistic.h>
 #include <llvm/ADT/PointerUnion.h>
@@ -58,7 +59,7 @@ static inline void clarifyUnknownSize(const DataLayout &DL,
     return;
   int64_t Offset = 0;
   auto Ptr = GetPointerBaseWithConstantOffset(Loc.Ptr, Offset, DL);
-  if (Offset != 0)
+  if (Offset > 0)
     Ptr = Loc.Ptr;
   if (auto GV = dyn_cast<GlobalValue>(Ptr)) {
     auto Ty = GV->getValueType();
@@ -71,6 +72,8 @@ static inline void clarifyUnknownSize(const DataLayout &DL,
       Loc.Size = LocationSize::precise(
           cast<ConstantInt>(Size)->getValue().getZExtValue() *
           DL.getTypeStoreSize(Ty));
+    else if (Loc.Size.mayBeBeforePointer())
+      Loc.Size = LocationSize::afterPointer();
   }
   LLVM_DEBUG(if (Loc.Size.hasValue()) {
     dbgs()
@@ -126,10 +129,32 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
                           DL.getTypeStoreSize(PointeeTy))
                     : LocationSize::beforeOrAfterPointer();
     if (MemorySetInfo<MemoryLocation>::sizecmp(Size, Loc.Size) > 0) {
-      Loc.Size = Size;
-      return true;
+      auto NewLoc{Loc.getWithNewSize(Size)};
+      clarifyUnknownSize(DL, NewLoc);
+      return NewLoc.Size != Loc.Size ? Loc = std::move(NewLoc), true : false;
     }
     auto GEP = dyn_cast<const GEPOperator>(Loc.Ptr);
+    // It seems that it is safe to not assume unknown size for non-GEP
+    // instructions. If this pointer is used as an actual parameter
+    // corresponding location with a correct size is built while a call
+    // instruction is processed. If there is a GEP instruction which uses
+    // this pointer, corresponding location with a correct size is built while
+    // GEP is stripped. If there is a cast to integer and arithmetic operations
+    // with the casted value, a distinct memory location corresponding to a
+    // produced result is build.
+#if 0
+    if (!GEP) {
+      if (Loc.Size.mayBeBeforePointer())
+        return false;
+      auto NewLoc{Loc.getWithNewSize(!Loc.Size.hasValue()
+                                         ? LocationSize::beforeOrAfterPointer()
+                                         : LocationSize::afterPointer())};
+      clarifyUnknownSize(DL, NewLoc);
+      return NewLoc.Size != Loc.Size ? Loc = std::move(NewLoc), true : false;
+
+      return false;
+    }
+#endif
     if (!GEP)
       return false;
     unsigned ZeroTailIdx = GEP->getNumOperands();
@@ -178,17 +203,15 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
       LLVM_DEBUG(dbgs() << "[ALIAS TREE]: strip GEP to base pointer\n");
       Loc.Ptr = GEP->getPointerOperand();
       Loc.AATags = llvm::DenseMapInfo<llvm::AAMDNodes>::getTombstoneKey();
-      if (Loc.Size.hasValue()) {
-        Type *SrcTy = GEP->getSourceElementType();
-        if (SrcTy->isArrayTy() || SrcTy->isStructTy()) {
-          auto SrcSize = DL.getTypeStoreSize(SrcTy);
-          APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
-          if (GEP->accumulateConstantOffset(DL, GEPOffset))
-            if (Loc.Size.getValue() + GEPOffset.getSExtValue() <= SrcSize) {
-              Loc.Size = LocationSize::precise(SrcSize);
-              return true;
-            }
-        }
+      Type *SrcTy = GEP->getSourceElementType();
+      if (SrcTy->isArrayTy() || SrcTy->isStructTy()) {
+        auto SrcSize = DL.getTypeStoreSize(SrcTy);
+        APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (GEP->accumulateConstantOffset(DL, GEPOffset))
+          if (Loc.Size.getValue() + GEPOffset.getSExtValue() <= SrcSize) {
+            Loc.Size = LocationSize::precise(SrcSize);
+            return true;
+          }
       }
     }
     for (;;) {
@@ -197,7 +220,9 @@ bool stripMemoryLevel(const DataLayout &DL, MemoryLocation &Loc) {
         break;
       Loc.Ptr = BasePtr;
     }
-    Loc.Size = LocationSize::afterPointer();
+    Loc.Size = Loc.Size.mayBeBeforePointer()
+                   ? LocationSize::beforeOrAfterPointer()
+                   : LocationSize::afterPointer();
     clarifyUnknownSize(DL, Loc);
     return true;
   }
@@ -997,7 +1022,8 @@ AliasTree::insert(const MemoryLocation &Base) {
         CT::spliceNext(EM, Prev);
         return std::make_tuple(EM, true, AddAmbiguous);
       }
-      if (Base.Size == UpdateChain->getSize()) {
+      if (MemorySetInfo<MemoryLocation>::sizecmp(Base.Size,
+                                                 UpdateChain->getSize()) == 0) {
         UpdateChain->updateAAInfo(Base.AATags);
         return std::make_tuple(UpdateChain, false, AddAmbiguous);
       }
@@ -1093,7 +1119,7 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
     addLocation(MemoryLocation(
         V, PointeeTy && PointeeTy->isSized()
                ? LocationSize::precise(DL.getTypeStoreSize(PointeeTy))
-               : LocationSize::afterPointer()));
+               : LocationSize::beforeOrAfterPointer()));
   };
   for (auto &Arg : F.args())
     addPointeeIfNeed(&Arg);
