@@ -574,6 +574,7 @@ trait::Reduction::Kind getReductionKind(
   switch (const_cast<RecurrenceDescriptor &>(RD).getRecurrenceKind()) {
   case RecurKind::Add:
   case RecurKind::FAdd:
+  case RecurKind::FMulAdd:
     return trait::DIReduction::RK_Add;
   case RecurKind::Mul:
   case RecurKind::FMul:
@@ -592,7 +593,6 @@ trait::Reduction::Kind getReductionKind(
   case RecurKind::SMin:
   case RecurKind::UMin:
     return trait::DIReduction::RK_Min;
-  case RecurKind::FMulAdd:
   case RecurKind::SelectICmp:
   case RecurKind::SelectFCmp:
     //TODO (kaniandr@gmail.com): add support for these kinds of reductions.
