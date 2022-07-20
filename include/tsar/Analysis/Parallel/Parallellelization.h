@@ -499,17 +499,72 @@ ParallelItemRef Parallelization::find(llvm::BasicBlock *BB, AnchorT Anchor,
 }
 
 namespace llvm {
-template<typename From> struct simplify_type;
-template<> struct simplify_type<tsar::ParallelItemRef> {
-  using SimpleType = tsar::ParallelItem *;
-  static SimpleType getSimplifiedValue(tsar::ParallelItemRef &Ref) {
+template <>
+struct ValueIsPresent<tsar::ParallelItemRef> {
+  using UnwrappedType = tsar::ParallelItem *;
+  static inline bool isPresent(const tsar::ParallelItemRef &Ref) {
+    return Ref.isValid();
+  }
+  static inline decltype(auto) unwrapValue(tsar::ParallelItemRef &Ref) {
     return Ref.getUnchecked();
   }
 };
-template<> struct simplify_type<const tsar::ParallelItemRef> {
-  using SimpleType = const tsar::ParallelItem *;
-  static SimpleType getSimplifiedValue(const tsar::ParallelItemRef &Ref) {
+
+template <>
+struct ValueIsPresent<const tsar::ParallelItemRef> {
+  using UnwrappedType = const tsar::ParallelItem *;
+  static inline bool isPresent(const tsar::ParallelItemRef &Ref) {
+    return Ref.isValid();
+  }
+  static inline decltype(auto) unwrapValue(const tsar::ParallelItemRef &Ref) {
     return Ref.getUnchecked();
+  }
+};
+
+template <typename To> struct CastIsPossible<To, const tsar::ParallelItemRef> {
+  static inline bool isPossible(const tsar::ParallelItemRef &Ref) {
+    return CastIsPossible<To, const tsar::ParallelItem *>::isPossible(
+        Ref.getUnchecked());
+  }
+};
+
+template <typename To> struct CastIsPossible<To, tsar::ParallelItemRef> {
+  static inline bool isPossible(const tsar::ParallelItemRef &Ref) {
+    return CastIsPossible<To, const tsar::ParallelItem *>::isPossible(
+        Ref.getUnchecked());
+  }
+};
+
+template <typename To>
+struct CastInfo<To, tsar::ParallelItemRef>
+    : public CastIsPossible<To, tsar::ParallelItemRef> {
+  using CastReturnType =
+      typename cast_retty<To, tsar::ParallelItem *>::ret_type;
+  static inline CastReturnType doCast(tsar::ParallelItemRef &Ref) {
+    return CastInfo<To, tsar::ParallelItem *>::doCast(Ref.getUnchecked());
+  }
+  static inline CastReturnType castFailed() { return CastReturnType{}; }
+  static inline CastReturnType doCastIfPossible(tsar::ParallelItemRef &Ref) {
+    if (!CastInfo<To, tsar::ParallelItemRef>::isPossible(Ref))
+      return castFailed();
+    return doCast(Ref);
+  }
+};
+
+template <typename To>
+struct CastInfo<To, const tsar::ParallelItemRef>
+    : public CastIsPossible<To, const tsar::ParallelItemRef> {
+  using CastReturnType =
+      typename cast_retty<To, const tsar::ParallelItem *>::ret_type;
+  static inline CastReturnType doCast(const tsar::ParallelItemRef &Ref) {
+    return CastInfo<To, const tsar::ParallelItem *>::doCast(Ref.getUnchecked());
+  }
+  static inline CastReturnType castFailed() { return CastReturnType{}; }
+  static inline CastReturnType
+  doCastIfPossible(const tsar::ParallelItemRef &Ref) {
+    if (!CastInfo<To, const tsar::ParallelItemRef>::isPossible(Ref))
+      return castFailed();
+    return doCast(Ref);
   }
 };
 
