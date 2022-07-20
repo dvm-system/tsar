@@ -610,6 +610,9 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
         // In LLVM it is not possible to take address of intrinsic function.
         if (F->isIntrinsic())
           return false;
+      } else if (auto *GV{dyn_cast<GlobalValue>(V)};
+                 GV && GV->hasGlobalUnnamedAddr()) {
+        return false;
       }
       return true;
     };
@@ -631,7 +634,10 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
     }
     auto &DL = I.getModule()->getDataLayout();
     // Any call may access some addresses even if it does not access memory.
-    if (auto *Call = dyn_cast<CallBase>(&I)) {
+    /// Is it safe to ignore intrinsics here? It seems that all intrinsics in
+    /// LLVM does not use addresses to perform computations instead of
+    /// memory accesses. We also ignore intrinsics in PrivateAnalysisPass.
+    if (auto *Call = dyn_cast<CallBase>(&I); Call && !isa<IntrinsicInst>(I)) {
       bool UnknownAddressAccess = true;
       auto F = llvm::dyn_cast<Function>(
         Call->getCalledOperand()->stripPointerCasts());
