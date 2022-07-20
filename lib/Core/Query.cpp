@@ -348,6 +348,8 @@ void DefaultQueryManager::run(llvm::Module *M, TransformationInfo *TfmInfo) {
   addAfterFunctionInlineAnalysis(
       *mGlobalOptions, M->getDataLayout(),
       [](auto &T) {
+        if (T.getMemory()->emptyBinding() || T.getMemory()->isOriginal())
+          return;
         unmarkIf<trait::Lock, trait::NoPromotedScalar>(T);
         unmark<trait::NoPromotedScalar>(T);
       },
