@@ -1678,10 +1678,15 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
   BasicBlock *Header = L->getHeader();
   Function &F = *Header->getParent();
   // Enable analysis of reductions in case of real variables.
-  bool HasFunNoNaNAttr =
-    F.getFnAttribute("no-nans-fp-math").getValueAsString() == "true";
-  if (!HasFunNoNaNAttr)
+  FastMathFlags FMF;
+  FMF.setNoNaNs(
+      F.getFnAttribute("no-nans-fp-math").getValueAsBool());
+  FMF.setNoSignedZeros(
+      F.getFnAttribute("no-signed-zeros-fp-math").getValueAsBool());
+  if (!FMF.noNaNs())
     F.addFnAttr("no-nans-fp-math", "true");
+  if (!FMF.noSignedZeros())
+    F.addFnAttr("no-signed-zeros-fp-math", "true");
   for (auto I = L->getHeader()->begin(); isa<PHINode>(I); ++I) {
     auto *Phi = cast<PHINode>(I);
     RecurrenceDescriptor RD;
@@ -1716,10 +1721,12 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
         auto DIEM = dyn_cast<DIEstimateMemory>(T.getMemory());
         if (!DIEM)
           return;
-        SourceUnparserImp Unparser(DIMemoryLocation(
-          const_cast<DIVariable *>(DIEM->getVariable()),
-          const_cast<DIExpression *>(DIEM->getExpression())),
-          true /*order of dimensions is not important here*/);
+        SourceUnparserImp Unparser(
+            DIMemoryLocation::get(
+                const_cast<DIVariable *>(DIEM->getVariable()),
+                const_cast<DIExpression *>(DIEM->getExpression()), nullptr,
+                DIEM->isTemplate(), DIEM->isAfterPointer()),
+            true /*order of dimensions is not important here*/);
         if (!Unparser.unparse() || Unparser.getIdentifiers().empty())
           return;
         LLVM_DEBUG(dbgs() << "[DA DI]: induction found\n");
@@ -1756,8 +1763,10 @@ void DIDependencyAnalysisPass::analyzePromoted(Loop *L,
       propagateReduction(Phi, L, DWLang, DIAliasSTR, LockedTraits, Pool);
     }
   }
-  if (!HasFunNoNaNAttr)
+  if (!FMF.noNaNs())
     F.addFnAttr("no-nans-fp-math", "false");
+  if (!FMF.noSignedZeros())
+    F.addFnAttr("no-signed-zeros-fp-math", "false");
 }
 
 void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
