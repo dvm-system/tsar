@@ -895,8 +895,12 @@ void APCParallelizationPass::addRemoteAccessDirectives(
   auto &TLI{TLIP.getTLI(ClientF)};
   auto &Provider{getAnalysis<APCDataDistributionProvider>(ClientF)};
   auto &ClientDIAT{Provider.get<DIEstimateMemoryPass>().getAliasTree()};
-  DIMemoryClientServerInfo ClientServerInfo(ClientDIAT, *this, ClientF);
-  auto &F{cast<Function>(*ClientServerInfo.getValue(&ClientF))};
+  AnalysisSocket *Socket{nullptr};
+  if (auto *SI{getAnalysisIfAvailable<AnalysisSocketImmutableWrapper>()})
+    Socket = (*SI)->getActiveSocket();
+  DIMemoryClientServerInfo ClientServerInfo(ClientDIAT, Socket, ClientF);
+  assert(ClientServerInfo.isValidMemory() &&
+         "Analysis information must be available!");
   SmallPtrSet<const DIAliasNode *, 8> DistinctMemory;
   for (auto &DIM : make_range(ClientServerInfo.DIAT->memory_begin(),
                               ClientServerInfo.DIAT->memory_end()))
