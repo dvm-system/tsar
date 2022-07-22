@@ -42,6 +42,7 @@ class Value;
 
 namespace tsar {
 class EstimateMemory;
+class AnalysisSocket;
 
 /// This is a helpful class to obtain analysis results from active server.
 ///
@@ -49,12 +50,21 @@ class EstimateMemory;
 /// Otherwise, this class is a simple wrapper for analysis on client and
 /// it returns information from client.
 struct DIClientServerInfo {
-  DIClientServerInfo(llvm::Pass &P, llvm::Function &F);
+  DIClientServerInfo(llvm::Pass &P, llvm::Function &F,
+                     DIAliasTree *ClientDIAT = nullptr,
+                     DIDependencInfo *ClientDIDepInfo = nullptr);
+
+  DIClientServerInfo(AnalysisSocket *Socket, llvm::Function &F,
+                     DIAliasTree *ClientDIAT = nullptr,
+                     DIDependencInfo *ClientDIDepInfo = nullptr);
 
   /// Return true if data is available.
   bool isValid() const noexcept {
     return DIAT && DIDepInfo;
   }
+
+  bool isValidMemory() const noexcept { return DIAT; }
+  bool isValideDependecies() const noexcept { return DIDepInfo; }
 
   /// Return true if data is available.
   operator bool () const noexcept { return isValid(); }
@@ -91,6 +101,10 @@ struct DIMemoryClientServerInfo : public DIClientServerInfo {
   /// Obtain analysis from client and server.
   DIMemoryClientServerInfo(DIAliasTree &ClientDIAT, llvm::Pass &P,
     llvm::Function &F);
+
+  /// Obtain analysis from client and server.
+  DIMemoryClientServerInfo(DIAliasTree &ClientDIAT, AnalysisSocket *Socket,
+    llvm::Function &F, DIDependencInfo *ClientDIDepInfo = nullptr);
 
   /// Return client-to-server memory pair for a specified estimate memory on
   /// client.
