@@ -170,7 +170,7 @@ public:
 
 private:
   template<typename T> bool PushBackIfArray(T &N) {
-    if (auto *E{semantics::GetExpr(N)})
+    if (auto *E{semantics::GetExpr(nullptr, N)})
       if (auto EDR{evaluate::ExtractDataRef(*E)})
         if (const auto *AR{std::get_if<evaluate::ArrayRef>(&EDR->u)}) {
           const semantics::Symbol &A{AR->GetLastSymbol()};
