@@ -93,9 +93,9 @@ private:
   ///
   /// If `DIDef` is not specified then `Def` must be a constant for successful
   /// unparsing.
-  bool unparseReplacement(const Value &Def, const tsar::DIMemoryLocation *DIDef,
-    unsigned DWLang, const tsar::DIMemoryLocation &DIUse,
-    SmallVectorImpl<char> &DefStr);
+  bool unparseReplacement(const Value &Def, const Use &Use,
+    const tsar::DIMemoryLocation *DIDef, unsigned DWLang,
+    const tsar::DIMemoryLocation &DIUse, SmallVectorImpl<char> &DefStr);
 
   const DataLayout *mDL = nullptr;
   DominatorTree *mDT = nullptr;
@@ -812,9 +812,39 @@ void rememberPossibleAssignment(Value &Def, Instruction &UI,
 }
 
 bool ClangExprPropagation::unparseReplacement(
-    const Value &Def, const DIMemoryLocation *DIDef,
+    const Value &Def, const Use &Use, const DIMemoryLocation *DIDef,
     unsigned DWLang, const DIMemoryLocation &DIUse,
     SmallVectorImpl<char> &DefStr) {
+  auto unparseArrayAccess = [DWLang, &Use, &DefStr](Optional<DIMemoryLocation> &MD) {
+    if (MD && MD->isValid() && !MD->Template) {
+      if (unparseToString(DWLang, *MD, DefStr, false)) {
+        unsigned NumberOfDims = 0;
+        if (auto *UseGEP{dyn_cast<GEPOperator>(Use.getUser())};
+            UseGEP &&
+            GEPOperator::getPointerOperandIndex() == Use.getOperandNo())
+          NumberOfDims = 1 + dimensionsNum(UseGEP->getSourceElementType());
+        else if (auto *UseLI{dyn_cast<LoadInst>(Use.getUser())};
+                 UseLI &&
+                 LoadInst::getPointerOperandIndex() == Use.getOperandNo())
+          NumberOfDims = 1 + dimensionsNum(UseLI->getType());
+        else if (auto *UseSI{dyn_cast<StoreInst>(Use.getUser())};
+                 UseSI &&
+                 StoreInst::getPointerOperandIndex() == Use.getOperandNo())
+          NumberOfDims = 1 + dimensionsNum(UseSI->getValueOperand()->getType());
+        else
+          return false;
+        for (; NumberOfDims > 0 && DefStr.size() > 3; --NumberOfDims) {
+          auto Size = DefStr.size();
+          if (DefStr[Size - 1] != ']' || DefStr[Size - 2] != '0' ||
+              DefStr[Size - 3] != '[')
+            return false;
+          DefStr.resize(Size - 3);
+        }
+        return NumberOfDims == 0;
+      }
+    }
+    return false;
+  };
   if (auto *C = dyn_cast<Constant>(&Def)) {
     if (auto *CF = dyn_cast<Function>(&Def)) {
       auto *D = mTfmCtx->getDeclForMangledName(CF->getName());
@@ -839,22 +869,11 @@ bool ClangExprPropagation::unparseReplacement(
     } else if (auto *GEP = dyn_cast<GEPOperator>(&Def)) {
       auto MD = buildDIMemory(MemoryLocation::getAfter(GEP), GEP->getContext(),
                               *mDL, *mDT);
-      if (MD && MD->isValid() && !MD->Template) {
-        if (unparseToString(DWLang, *MD, DefStr, false)) {
-          auto NumberOfDims = 1 + dimensionsNum(
-            cast<llvm::PointerType>(GEP->getSourceElementType()));
-          for(; NumberOfDims > 0 && DefStr.size() > 3; --NumberOfDims) {
-            auto Size = DefStr.size();
-            if (DefStr[Size - 1] != ']' ||
-                DefStr[Size - 2] != '0' ||
-                DefStr[Size - 3] != '[')
-              return false;
-            DefStr.resize(Size - 3);
-          }
-          return NumberOfDims == 0;
-        }
-      }
-      return false;
+      return unparseArrayAccess(MD);
+    } else if (auto *GV = dyn_cast<GlobalVariable>(&Def)) {
+      auto MD = buildDIMemory(MemoryLocation::getAfter(GV), GV->getContext(),
+                              *mDL, *mDT);
+      return unparseArrayAccess(MD);
     } else {
       return false;
     }
@@ -946,7 +965,7 @@ bool ClangExprPropagation::runOnFunction(Function &F) {
         if (DIToDeclItr == DIMatcher.end())
           continue;
         SmallString<16> DefStr, UseStr;
-        if (!unparseReplacement(*Def, DIDef ? &*DIDef : nullptr,
+        if (!unparseReplacement(*Def, U, DIDef ? &*DIDef : nullptr,
               *DWLang, DILoc, DefStr))
           continue;
         if (DefStr == DILoc.Var->getName())
