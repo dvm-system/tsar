@@ -697,12 +697,12 @@ int Tool::run(QueryManager *QM) {
     } else if (InputKind.getLanguage() == clang::Language::C ||
                InputKind.getLanguage() == clang::Language::CXX) {
       CSources.push_back(Src);
-      if (InputKind.getFormat() == InputKind::Precompiled)
-        CSourcesToMerge.push_back(Src);
-      else
-        NoASTCSources.push_back(Src);
+      NoASTCSources.push_back(Src);
     } else if (InputKind.getLanguage() == clang::Language::LLVM_IR) {
       LLSources.push_back(Src);
+    } else if (InputKind.getLanguage() == clang::Language::Unknown &&
+               InputKind.getFormat() == InputKind::Precompiled) {
+      CSourcesToMerge.push_back(Src);
     } else {
 #ifdef FLANG_FOUND
       auto FortranKind{
