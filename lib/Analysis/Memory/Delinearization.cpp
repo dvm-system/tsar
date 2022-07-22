@@ -419,7 +419,7 @@ void DelinearizationPass::fillArrayDimensionsSizes(Array &ArrayInfo) {
   for (; DimIdx > 0; --DimIdx) {
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process dimension " << DimIdx << "\n");
     const SCEV *DimSize;
-    if (ArrayInfo.isKnownDimSize(DimIdx) > 0) {
+    if (ArrayInfo.isKnownDimSize(DimIdx)) {
       DimSize = ArrayInfo.getDimSize(DimIdx);
       if (DimSize->isZero()) {
         setUnknownDims(DimIdx);
@@ -570,8 +570,12 @@ void DelinearizationPass::findArrayDimensionsFromDbgInfo(Array &ArrayInfo) {
             if (auto *DII = dyn_cast<DbgVariableIntrinsic>(U))
               DbgInsts.push_back(DII);
           if (DbgInsts.size() == 1) {
-            ArrayInfo.setDimSize(DimIdx + PassPtrDim,
-              mSE->getSCEV(DbgInsts.front()->getVariableLocationOp(0)));
+            auto *DimSize{
+                mSE->getSCEV(DbgInsts.front()->getVariableLocationOp(0))};
+            if (!DimSize->getType()->isPointerTy())
+              ArrayInfo.setDimSize(DimIdx + PassPtrDim, DimSize);
+            LLVM_DEBUG(dbgs()
+                       << (isa<SCEVUnknown>(DimSize) ? " unknown" : "known "));
           }
         }
         LLVM_DEBUG(dbgs() << DIVar->getName() << "\n");
