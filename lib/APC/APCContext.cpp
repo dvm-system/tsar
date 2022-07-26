@@ -52,6 +52,33 @@ void sendMessage_1lvl(const std::wstring &toSend) {}
 void sendMessage_2lvl(const std::wstring &toSend) {}
 
 int langOfMessages = 1; // 0 - ENG, 1 - RUS
+int mpiProgram = 0;
+int keepFiles = 0;
+
+/// Try to transform nest of loops to perfect nest.
+bool createNestedLoops(LoopGraph *current,
+    const std::map<LoopGraph *, void *> &depInfoForLoopGraph,
+    const std::map<std::string, FuncInfo *> &mapFuncInfo,
+    std::vector<Messages> &messages) {
+  return false;
+}
+bool analyzeLoopBody(
+    LoopGraph *loopV,
+    std::map<DIST::Array *,
+             std::vector<std::pair<bool, std::pair<std::string, int>>>>
+        &leftValues,
+    std::map<DIST::Array *,
+             std::vector<
+                 std::pair<bool, std::map<std::string, std::pair<int, int>>>>>
+        &rightValues,
+    std::string &base,
+    const std::map<DIST::Array *, std::vector<bool>> &dimsNotMatch,
+    const std::map<std::string, FuncInfo *> &mapFuncInfo) {
+  return true;
+}
+
+void createNeededException() { }
+
 //===----------------------------------------------------------------------===//
 
 APCContext::APCContext() : mImpl(new APCContextImpl) {}
@@ -60,7 +87,7 @@ APCContext::~APCContext() { delete mImpl; }
 void APCContext::initialize() {
   assert(!mIsInitialized && "Context has been already initialized!");
   mImpl->ParallelRegions.push_back(
-    make_unique<ParallelRegion>(mImpl->ParallelRegions.size(), "DEFAULT"));
+    std::make_unique<ParallelRegion>(mImpl->ParallelRegions.size(), "DEFAULT"));
 #ifndef NDEBUG
   mIsInitialized = true;
 #endif
@@ -71,8 +98,16 @@ ParallelRegion & APCContext::getDefaultRegion() {
   return *mImpl->ParallelRegions.front();
 }
 
+void APCContext::addExpression(apc::Expression *E) {
+  mImpl->Expressions.emplace_back(E);
+}
+
 void APCContext::addSymbol(apc::Symbol *S) {
   mImpl->Symbols.emplace_back(S);
+}
+
+void APCContext::addStatement(apc::Statement *S) {
+  mImpl->Statements.emplace_back(S);
 }
 
 bool APCContext::addLoop(ObjectID ID, apc::LoopGraph *L, bool ManageMemory) {
@@ -92,9 +127,18 @@ bool APCContext::addArray(ObjectID ID, apc::Array *A) {
   return mImpl->Arrays.try_emplace(ID, A).second;
 }
 
+bool APCContext::addArray(dvmh::Template *ID, apc::Array *A) {
+  return mImpl->Templates.try_emplace(ID, A).second;
+}
+
 apc::Array* APCContext::findArray(ObjectID ID) {
   auto I = mImpl->Arrays.find(ID);
   return I != mImpl->Arrays.end() ? I->second.get() : nullptr;
+}
+
+apc::Array* APCContext::findArray(dvmh::Template *ID) {
+  auto I = mImpl->Templates.find(ID);
+  return I != mImpl->Templates.end() ? I->second : nullptr;
 }
 
 std::size_t APCContext::getNumberOfArrays() const {
@@ -108,6 +152,29 @@ bool APCContext::addFunction(llvm::Function &F, apc::FuncInfo *FI) {
 apc::FuncInfo * APCContext::findFunction(const llvm::Function &F) {
   auto I = mImpl->Functions.find(&F);
   return I != mImpl->Functions.end() ? I->second.get() : nullptr;
+}
+
+std::string APCContext::getUniqueName(const DIVariable &DIVar,
+                                      const Function &F) {
+  auto DeclLoc{std::pair(DIVar.getLine(), 0)};
+  unsigned ScopeLine{0}, ScopeColumn{0};
+  auto *DIS{DIVar.getScope()};
+  if (auto *DISub{dyn_cast<DISubprogram>(DIS)}) {
+    ScopeLine = DISub->getLine();
+  } else if (auto *DILex{dyn_cast<DILexicalBlock>(DIS)}) {
+    ScopeLine = DILex->getLine();
+    ScopeColumn = DILex->getColumn();
+  }
+  auto Filename{(DIVar.getFilename().empty()
+                     ? StringRef(F.getParent()->getSourceFileName())
+                     : DIVar.getFilename())};
+  // Unique name is
+  // '<file>:line[scopeLine:scopeColumn]:@<function>%<variable>.<member>'.
+  return (Filename + ":" + Twine(DIVar.getLine()) + "[" + Twine(ScopeLine) +
+          ":" + Twine(ScopeColumn) + "]" + "@" +
+          (isa<DILocalVariable>(DIVar) ? F.getName() : "") + "%" +
+          DIVar.getName())
+      .str();
 }
 
 namespace {

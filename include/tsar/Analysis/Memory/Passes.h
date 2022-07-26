@@ -135,7 +135,7 @@ void initializeDIDependencyAnalysisPassPass(PassRegistry &Registry);
 ///
 /// This includes privatization, reduction and induction variable recognition
 /// and flow/anti/output dependencies exploration.
-FunctionPass * createDIDependencyAnalysisPass();
+FunctionPass * createDIDependencyAnalysisPass(bool IsInitialization = false);
 
 /// Initialize a pass to process traits in a region.
 void initializeProcessDIMemoryTraitPassPass(PassRegistry &Registry);

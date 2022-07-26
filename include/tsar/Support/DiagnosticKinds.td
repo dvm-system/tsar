@@ -120,7 +120,16 @@ def note_de_macro_prevent : Warning<"macro prevent dead code elimination">;
 def note_de_side_effect_prevent : Warning<"side effect prevent dead code elimination">;
 def note_de_multiple_prevent : Warning<"live declaration prevent dead code elimination">;
 
-def err_apc_insert_dvm_directive : Error<"unable to insert DVMH directive '%0'">;
+def err_directive_insert_unable : Error<"unable to insert directive '%0'">;
+def warn_directive_insert_unable : Warning<"unable to insert directive '%0'">;
+def warn_directive_dt_optimize_unable : Warning<"unable to optimize data transfer directive '%0'">;
+
+def note_directive_instantiate_unable : Note<"unable to insert instantiation of the directive">;
+def note_directive_multiple_begin: Note<"multiple start positions required">;
+def note_directive_multiple_end: Note<"multiple end positions required">;
+def note_directive_inconsistent_bounds: Note<"inconsistent bounds">;
+def note_directive_declaration_in_scope : Note<"declaration in the directive scope">;
+
 def note_apc_not_single_decl_stmt : Note<"declaration statement must containt a single declaration">;
 def note_apc_insert_macro_prevent : Note<"macro prevent insertion of directive">;
 def note_apc_insert_multiple_directives : Note<"other directive has been already inserted in this location">;

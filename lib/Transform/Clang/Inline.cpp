@@ -34,6 +34,7 @@
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/SourceLocationTraverse.h"
 #include "tsar/Support/Clang/Utils.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/Analysis/CallGraph.h>
 #include <clang/Analysis/CFG.h>
@@ -73,10 +74,30 @@ void ClangInlinerPass::getAnalysisUsage(AnalysisUsage& AU) const {
 }
 
 bool ClangInlinerPass::runOnModule(llvm::Module& M) {
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  auto CXXCUItr{find_if(CUs->operands(), [](auto *MD) {
+    auto *CU{dyn_cast<DICompileUnit>(MD)};
+    return CU &&
+           (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()));
+  })};
+  if (CXXCUItr == CUs->op_end()) {
+    M.getContext().emitError(
+        "cannot transform sources"
+        ": transformation of C/C++ sources are only possible now");
+    return false;
+  }
+  if (CUs->getNumOperands() != 1) {
+    M.getContext().emitError("cannot transform sources"
+      ": inline expansion is only implemented for a single source file now");
+    return false;
+  }
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo
+                   ? cast_or_null<ClangTransformationContext>(
+                         TfmInfo->getContext(cast<DICompileUnit>(**CXXCUItr)))
+                   : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
+    M.getContext().emitError("cannot transform sources"
         ": transformation context is not available");
     return false;
   }
@@ -90,8 +111,9 @@ bool ClangInlinerPass::runOnModule(llvm::Module& M) {
   const auto *ImportInfo = &ImportStub;
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
-  ClangInliner Inliner(Rewriter, Context,
-    GIP.getGlobalInfo(), GIP.getRawInfo(), *ImportInfo);
+  auto *GI{ GIP.getGlobalInfo(TfmCtx) };
+  assert(GI && "Global information must not be null!");
+  ClangInliner Inliner(Rewriter, Context, GI->GIE, GI->RI, *ImportInfo);
   Inliner.HandleTranslationUnit();
   return false;
 }

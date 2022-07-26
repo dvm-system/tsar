@@ -23,7 +23,9 @@
 //===----------------------------------------------------------------------===//
 #include "tsar/Analysis/Clang/ControlFlowTraits.h"
 #include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/MetadataUtils.h"
 #include <clang/AST/Expr.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/AST/Stmt.h>
@@ -173,17 +175,20 @@ private:
 }
 
 bool ClangCFTraitsPass::runOnFunction(Function &F) {
-  auto &M = *F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo) {
-    M.getContext().emitError("can not access sources"
-        ": transformation context is not available");
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
     return false;
-  }
-  auto TfmCtx = getAnalysis<TransformationEnginePass>()->getContext(M);
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not access sources"
-        ": transformation context is not available");
+    F.getContext().emitError("cannot transform sources"
+        ": transformation context is not available for the '" +
+        F.getName() + "' function");
     return false;
   }
   auto CurrD = TfmCtx->getDeclForMangledName(F.getName());

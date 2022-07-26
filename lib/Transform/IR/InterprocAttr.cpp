@@ -34,6 +34,7 @@
 #include <llvm/Analysis/CallGraphSCCPass.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/IR/Operator.h>
 #include <vector>
 
 using namespace tsar;
@@ -141,6 +142,30 @@ ModulePass * llvm::createRPOFunctionAttrsAnalysis() {
 }
 
 bool RPOFunctionAttrsAnalysis::runOnModule(llvm::Module &M) {
+  for (auto &F : M)
+    // Check if all calls of the function are direct.
+    for (auto *U : F.users()) {
+      SmallVector<User *, 4> Users;
+      SmallPtrSet<User *, 4> Visited{U};
+      SmallVector<User *, 4> Worklist{U};
+      do {
+        auto *U{Worklist.pop_back_val()};
+        if (Operator::getOpcode(U) == Instruction::BitCast) {
+          for (auto *U1 : U->users())
+            if (Visited.insert(U1).second)
+              Worklist.push_back(U1);
+        } else {
+          Users.push_back(U);
+        }
+      } while (!Worklist.empty());
+      if (any_of(Users, [](auto *U) {
+            return !isa<CallBase>(U) &&
+                   (!isa<BitCastOperator>(U) || any_of(U->users(), [](auto *U) {
+                     return !isa<CallBase>(U);
+                   }));
+          }))
+        addFnAttr(F, AttrKind::IndirectCall);
+    }
   auto &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
   std::vector<Function *> Worklist;
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {

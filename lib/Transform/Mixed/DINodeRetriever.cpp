@@ -117,11 +117,7 @@ INITIALIZE_PASS(DINodeRetrieverPass, "di-node-retriever",
                 "Debug Info Retriever", true, false)
 
 bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
-  ClangTransformationContext *TfmCtx = nullptr;
-  if (auto *TEP = getAnalysisIfAvailable<TransformationEnginePass>())
-    if (*TEP && (TfmCtx = (*TEP)->getContext(M)))
-      if (!TfmCtx->hasInstance())
-        TfmCtx = nullptr;
+  auto *TEP{getAnalysisIfAvailable<TransformationEnginePass>()};
   auto &Ctx = M.getContext();
   auto CUItr = M.debug_compile_units_begin();
   assert(CUItr != M.debug_compile_units_end() &&
@@ -142,17 +138,20 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
     // A name should be specified for global variables, otherwise LLVM IR is
     // considered corrupted.
     StringRef Name = "sapfor.var";
-    if (TfmCtx)
-      if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
-        auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
-        auto FName =
-            SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
-        File = DIB.createFile(FName, DirName);
-        Line = SrcMgr.getPresumedLineNumber(
-            SrcMgr.getExpansionLoc(D->getBeginLoc()));
-        if (auto ND = dyn_cast<NamedDecl>(D))
-          Name = ND->getName();
-      }
+    if (TEP && *TEP)
+      for (auto [CU, TfmCtxBase] : (*TEP)->contexts())
+        if (auto *TfmCtx{dyn_cast<ClangTransformationContext>(TfmCtxBase)})
+          if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
+            auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+            auto FName =
+                SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
+            File = DIB.createFile(FName, CU->getDirectory());
+            Line = SrcMgr.getPresumedLineNumber(
+                SrcMgr.getExpansionLoc(D->getBeginLoc()));
+            if (auto ND = dyn_cast<NamedDecl>(D))
+              Name = ND->getName();
+            break;
+          }
     auto *DITy = createStubType(M, GlobalVar.getType()->getAddressSpace(), DIB);
     auto *GV = DIGlobalVariable::getDistinct(
       Ctx, File, Name, GlobalVar.getName(), File, Line, DITy,
@@ -174,23 +173,25 @@ bool DINodeRetrieverPass::runOnModule(llvm::Module &M) {
     unsigned Line = 0;
     auto Flags = DINode::FlagZero;
     MDString *Name = nullptr;
-    if (TfmCtx)
-      if (auto *D = TfmCtx->getDeclForMangledName(F.getName())) {
-        auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
-        auto FName =
-            SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
-        File = DIB.createFile(FName, DirName);
-        Line = SrcMgr.getPresumedLineNumber(
-            SrcMgr.getExpansionLoc(D->getBeginLoc()));
-        if (auto *FD = dyn_cast<FunctionDecl>(D)) {
-          SmallString<64> ExtraName;
-          Name = MDString::get(Ctx, getFunctionName(*FD, ExtraName));
-          if (FD->hasPrototype())
-            Flags |= DINode::FlagPrototyped;
-          if (FD->isImplicit())
-            Flags |= DINode::FlagArtificial;
-        }
-      }
+    if (TEP && *TEP)
+      for (auto [CU, TfmCtxBase] : (*TEP)->contexts())
+        if (auto *TfmCtx{dyn_cast<ClangTransformationContext>(TfmCtxBase)})
+          if (auto *D = TfmCtx->getDeclForMangledName(F.getName())) {
+            auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+            auto FName =
+                SrcMgr.getFilename(SrcMgr.getExpansionLoc(D->getBeginLoc()));
+            File = DIB.createFile(FName, CU->getDirectory());
+            Line = SrcMgr.getPresumedLineNumber(
+                SrcMgr.getExpansionLoc(D->getBeginLoc()));
+            if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+              SmallString<64> ExtraName;
+              Name = MDString::get(Ctx, getFunctionName(*FD, ExtraName));
+              if (FD->hasPrototype())
+                Flags |= DINode::FlagPrototyped;
+              if (FD->isImplicit())
+                Flags |= DINode::FlagArtificial;
+            }
+          }
     auto SPFlags =
         DISubprogram::toSPFlags(F.hasLocalLinkage(), !F.isDeclaration(), false);
     auto *SP = DISubprogram::getDistinct(Ctx, File, Name,

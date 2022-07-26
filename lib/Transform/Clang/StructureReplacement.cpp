@@ -34,6 +34,7 @@
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/Clang/Utils.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Utils.h"
 #include "tsar/Transform/Clang/Passes.h"
 #include <bcl/utility.h>
@@ -43,6 +44,7 @@
 #include <clang/Lex/Lexer.h>
 #include <clang/Sema/Sema.h>
 #include <llvm/ADT/SCCIterator.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/Debug.h>
@@ -266,7 +268,7 @@ using CallList = std::vector<clang::CallExpr *>;
 /// This class collects all 'replace' clauses in the code.
 class ReplacementCollector : public RecursiveASTVisitor<ReplacementCollector> {
 public:
-  ReplacementCollector(TransformationContext &TfmCtx,
+  ReplacementCollector(ClangTransformationContext &TfmCtx,
       const ASTImportInfo &ImportInfo,
       ReplacementMap &Replacements, CallList &Calls)
      : mTfmCtx(TfmCtx)
@@ -631,7 +633,7 @@ private:
     return true;
   }
 
-  TransformationContext &mTfmCtx;
+  ClangTransformationContext &mTfmCtx;
   const ASTImportInfo &mImportInfo;
   SourceManager &mSrcMgr;
   const LangOptions &mLangOpts;
@@ -695,8 +697,8 @@ public:
   using ReplacementCandidates =
     SmallDenseMap<NamedDecl *, SmallVector<Replacement, 8>, 8>;
 
-  ReplacementSanitizer(TransformationContext &TfmCtx,
-      ClangGlobalInfoPass::RawInfo &RawInfo, FunctionInfo &RC,
+  ReplacementSanitizer(ClangTransformationContext &TfmCtx,
+      ClangGlobalInfo::RawInfo &RawInfo, FunctionInfo &RC,
       ReplacementMap &ReplacementInfo)
      : mLangOpts(TfmCtx.getContext().getLangOpts())
      , mSrcMgr(TfmCtx.getContext().getSourceManager())
@@ -846,7 +848,7 @@ private:
 
   const LangOptions &mLangOpts;
   SourceManager &mSrcMgr;
-  ClangGlobalInfoPass::RawInfo *mRawInfo;
+  ClangGlobalInfo::RawInfo *mRawInfo;
   FunctionInfo &mReplacements;
   ReplacementMap &mReplacementInfo;
 
@@ -1248,8 +1250,8 @@ private:
     return true;
   }
 
-  TransformationContext *mTfmCtx = nullptr;
-  ClangGlobalInfoPass::RawInfo *mRawInfo = nullptr;
+  ClangTransformationContext *mTfmCtx = nullptr;
+  ClangGlobalInfo::RawInfo *mRawInfo = nullptr;
   const GlobalInfoExtractor *mGlobalInfo = nullptr;
   ReplacementMap mReplacementInfo;
 };
@@ -1727,8 +1729,27 @@ bool ClangStructureReplacementPass::insertNewFunction(FunctionInfo &FuncInfo,
 }
 
 bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  auto CXXCUItr{find_if(CUs->operands(), [](auto *MD) {
+    auto *CU{dyn_cast<DICompileUnit>(MD)};
+    return CU &&
+           (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()));
+  })};
+  if (CXXCUItr == CUs->op_end()) {
+    M.getContext().emitError(
+        "cannot transform sources"
+        ": transformation of C/C++ sources are only possible now");
+    return false;
+  }
+  if (CUs->getNumOperands() != 1) {
+    M.getContext().emitError("cannot transform sources"
+      ": inline expansion are only implemented for a single source file now");
+    return false;
+  }
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
-  mTfmCtx = TfmInfo ? TfmInfo->getContext(M) : nullptr;
+  mTfmCtx = TfmInfo ? cast_or_null<ClangTransformationContext>(
+                          TfmInfo->getContext(cast<DICompileUnit>(**CXXCUItr)))
+                    : nullptr;
   if (!mTfmCtx || !mTfmCtx->hasInstance()) {
     M.getContext().emitError("can not transform sources"
         ": transformation context is not available");
@@ -1739,8 +1760,10 @@ bool ClangStructureReplacementPass::runOnModule(llvm::Module &M) {
   if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
     ImportInfo = &ImportPass->getImportInfo();
   auto &GIP = getAnalysis<ClangGlobalInfoPass>();
-  mRawInfo = &GIP.getRawInfo();
-  mGlobalInfo = &GIP.getGlobalInfo();
+  auto *GI{GIP.getGlobalInfo(mTfmCtx)};
+  assert(GI && "Global information must not be null!");
+  mRawInfo = &GI->RI;
+  mGlobalInfo = &GI->GIE;
   clang::CallGraph CG;
   CG.TraverseDecl(mTfmCtx->getContext().getTranslationUnitDecl());
   std::vector<scc_iterator<CallGraph *>> Postorder;

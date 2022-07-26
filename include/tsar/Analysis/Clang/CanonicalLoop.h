@@ -61,8 +61,9 @@ class CanonicalLoopInfo : private bcl::Uncopyable {
   enum Flags : uint8_t {
     DefaultFlags = 0,
     IsCanonical = 1u << 0,
-    IsSigned = 1u << 1,
-    IsUnsigned = 1u << 2,
+    IsRectangular = 1u << 1,
+    IsSigned = 1u << 2,
+    IsUnsigned = 1u << 3,
     LLVM_MARK_AS_BITMASK_ENUM(IsUnsigned)
   };
 public:
@@ -79,6 +80,12 @@ public:
 
   /// Marks this syntactically canonical loop as semantically canonical.
   void markAsCanonical() noexcept { mFlags |= IsCanonical; }
+
+  /// Returns true if the loop bounds are unchanging in the parent loop.
+  bool isRectangular() const noexcept { return mFlags & IsRectangular; }
+
+  /// Marks this loop if its loop bounds are unchanging in the parent loop.
+  void markAsRectangular() noexcept { mFlags |= IsRectangular; }
 
   /// Returns low-level representation of the loop.
   DFLoop * getLoop() noexcept { return mLoop; }

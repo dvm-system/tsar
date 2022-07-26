@@ -41,11 +41,13 @@
 #include "tsar/Analysis/Memory/DIDependencyAnalysis.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/DIMemoryEnvironment.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/LiveMemory.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/MemoryTraitJSON.h"
 #include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Unparse/Utils.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
@@ -53,6 +55,7 @@
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Utils.h"
 #include "tsar/Support/GlobalOptions.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/NumericUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <bcl/IntrusiveConnection.h>
@@ -158,7 +161,7 @@ enum class LoopType : short {
 
 JSON_OBJECT_BEGIN(Loop)
 JSON_OBJECT_PAIR_7(Loop,
-  ID, unsigned,
+  ID, std::uint64_t,
   StartLocation, Location,
   EndLocation, Location,
   Traits, LoopTraits,
@@ -177,7 +180,7 @@ JSON_OBJECT_END(Loop)
 
 JSON_OBJECT_BEGIN(LoopTree)
 JSON_OBJECT_ROOT_PAIR_2(LoopTree,
-  FunctionID, unsigned,
+  FunctionID, std::uint64_t,
   Loops, std::vector<Loop>)
 
   LoopTree() : JSON_INIT_ROOT {}
@@ -210,7 +213,7 @@ JSON_OBJECT_END(FunctionTraits)
 
 JSON_OBJECT_BEGIN(Function)
 JSON_OBJECT_PAIR_8(Function,
-  ID, unsigned,
+  ID, std::uint64_t,
   Name, std::string,
   User, bool,
   StartLocation, Location,
@@ -254,7 +257,7 @@ enum class StmtKind : uint8_t {
 JSON_OBJECT_BEGIN(CalleeFuncInfo)
 JSON_OBJECT_PAIR_3(CalleeFuncInfo,
   Kind, StmtKind,
-  CalleeID, unsigned,
+  CalleeID, std::uint64_t,
   StartLocation, std::vector<Location>)
 
   CalleeFuncInfo() : JSON_INIT(CalleeFuncInfo, StmtKind::Invalid, 0) {}
@@ -268,8 +271,8 @@ JSON_OBJECT_END(CalleeFuncInfo)
 
 JSON_OBJECT_BEGIN(CalleeFuncList)
 JSON_OBJECT_ROOT_PAIR_4(CalleeFuncList,
-  FuncID, unsigned,
-  LoopID, unsigned,
+  FuncID, std::uint64_t,
+  LoopID, std::uint64_t,
   Attr, CFFlags,
   Functions, std::vector<CalleeFuncInfo>)
 
@@ -284,7 +287,7 @@ JSON_OBJECT_END(CalleeFuncList)
 
 JSON_OBJECT_BEGIN(SourceObject)
 JSON_OBJECT_PAIR_3(SourceObject,
-  ID, unsigned,
+  ID, std::uint64_t,
   Name, std::string,
   DeclLocation, Location)
 
@@ -351,8 +354,8 @@ JSON_OBJECT_END(AliasEdge)
 
 JSON_OBJECT_BEGIN(AliasTree)
 JSON_OBJECT_ROOT_PAIR_4(AliasTree,
-  FuncID, unsigned,
-  LoopID, unsigned,
+  FuncID, std::uint64_t,
+  LoopID, std::uint64_t,
   Nodes, std::vector<AliasNode>,
   Edges, std::vector<AliasEdge>)
 
@@ -869,6 +872,21 @@ namespace {
 /// Interacts with a client and sends result of analysis on request.
 class PrivateServerPass :
   public ModulePass, private bcl::Uncopyable {
+
+  struct Definition {
+    Definition(llvm::DICompileUnit *CU, TransformationContextBase *TfmCtx,
+               clang::Decl *Body, uint64_t Id)
+        : CU(CU), TfmCtx(TfmCtx), Body(Body), Id(Id) {}
+    llvm::DICompileUnit *CU;
+    TransformationContextBase *TfmCtx;
+    clang::Decl *Body;
+    uint64_t Id;
+  };
+
+  using TypeToFunctionMap = StringMap<bcl::tagged_pair<
+      bcl::tagged<Definition *, Definition>,
+      bcl::tagged<SmallPtrSet<clang::FunctionDecl *, 4>, clang::FunctionDecl>>>;
+
 public:
   /// Pass identification, replacement for typeid.
   static char ID;
@@ -900,25 +918,44 @@ private:
     const msg::CalleeFuncList &Request);
   std::string answerAliasTree(llvm::Module &M, const msg::AliasTree &Request);
 
-  /// Recursively collect builtin functions in a specified contexs and
+  /// Recursively collect builtin functions in a specified context and
   /// inner contexts.
-  void collectBuiltinFunctions(clang::DeclContext &DeclCtx,
-    msg::FunctionList &FuncList);
+  void collectBuiltinFunctions(clang::DeclContext &DeclCtx, llvm::Module &M,
+      llvm::DICompileUnit &CU, ClangTransformationContext &TfmCtx,
+      TypeToFunctionMap &TypeToFunc, msg::FunctionList &FuncList);
 
   bcl::IntrusiveConnection *mConnection;
   bcl::RedirectIO *mStdErr;
 
   TransformationInfo *mTfmInfo = nullptr;
-  TransformationContext *mTfmCtx  = nullptr;
   const GlobalOptions *mGlobalOpts = nullptr;
   AnalysisSocket *mSocket = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;
 
+  std::vector<std::unique_ptr<Definition>> mDefinitions;
+
   /// List of canonical function declarations which is visible to user in GUI.
   /// GUI knowns this function and it can highlight some information if
   /// necessary.
-  DenseSet<clang::FunctionDecl *> mVisibleToUser;
+  DenseMap<clang::Decl *, Definition *> mVisibleToUser;
 };
+
+Optional<uint64_t> toId(llvm::Module *M, llvm::DICompileUnit *CU,
+              clang::SourceLocation Loc) {
+  assert(M && "Module must not be null!");
+  assert(CU && "Compilation unit must not be null!");
+  auto CUs{M->getNamedMetadata("llvm.dbg.cu")};
+  unsigned CUId{1};
+  for (auto I{CUs->operands().begin()}, EI{CUs->operands().end()};
+       I != EI && CU != *I; ++I, ++CUId)
+    ;
+  assert(CUId <= CUs->getNumOperands() &&
+         "Compilation unit must be a part of module!");
+  uint64_t Id;
+  if (bcl::shrinkPair(CUId, Loc.getRawEncoding(), Id))
+    return Id;
+  return None;
+}
 
 /// Increments count of analyzed traits in a specified map TM.
 template<class TraitMap>
@@ -970,12 +1007,13 @@ std::pair<unsigned, unsigned> incrementTraitCount(Function &F,
   return std::pair(ParallelLoops, NotAnalyzedLoops);
 }
 
-msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr) {
+msg::Loop getLoopInfo(clang::Stmt *S, clang::SourceManager &SrcMgr,
+    llvm::Module &M, llvm::DICompileUnit &CU) {
   assert(S && "Statement must not be null!");
   auto LocStart = S->getBeginLoc();
   auto LocEnd = S->getEndLoc();
   msg::Loop Loop;
-  Loop[msg::Loop::ID] = LocStart.getRawEncoding();
+  Loop[msg::Loop::ID] = *toId(&M, &CU, LocStart);
   if (isa<clang::ForStmt>(S))
     Loop[msg::Loop::Type] = msg::LoopType::For;
   else if (isa<clang::DoStmt>(S))
@@ -1004,6 +1042,7 @@ INITIALIZE_PASS_DEPENDENCY(GlobalOptionsImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalDefinedMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalLiveMemoryWrapper)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DFRegionInfoPass)
 INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
@@ -1018,82 +1057,96 @@ INITIALIZE_PASS_END(PrivateServerPass, "server-private",
 
 std::string PrivateServerPass::answerStatistic(llvm::Module &M) {
   msg::Statistic Stat;
-  auto &Rewriter = mTfmCtx->getRewriter();
-  for (auto FI = Rewriter.getSourceMgr().fileinfo_begin(),
-    EI = Rewriter.getSourceMgr().fileinfo_end(); FI != EI; ++FI) {
-    auto Ext = sys::path::extension(FI->first->getName());
-    std::string Kind;
-    if (std::find(
-      msg::HeaderFile::extensions().begin(),
-      msg::HeaderFile::extensions().end(), Ext) !=
-      msg::HeaderFile::extensions().end())
-      Kind = msg::HeaderFile::name();
-    else if (std::find(
-      msg::SourceFile::extensions().begin(),
-      msg::SourceFile::extensions().end(), Ext) !=
-      msg::SourceFile::extensions().end())
-      Kind = msg::SourceFile::name();
-    else
-      Kind = msg::OtherFile::name();
-    auto I = Stat[msg::Statistic::Files].insert(std::make_pair(Kind, 1));
-    if (!I.second)
-      ++I.first->second;
+  for (auto &&[CU, TfmCtxBase] : mTfmInfo->contexts()) {
+    assert(CU && "Compilation unit must not be null!");
+    if (!TfmCtxBase || !TfmCtxBase->hasInstance())
+      continue;
+    if (auto *TfmCtx{cast<ClangTransformationContext>(TfmCtxBase)}) {
+      auto &Rewriter = TfmCtx->getRewriter();
+      for (auto FI = Rewriter.getSourceMgr().fileinfo_begin(),
+                EI = Rewriter.getSourceMgr().fileinfo_end();
+           FI != EI; ++FI) {
+        auto Ext = sys::path::extension(FI->first->getName());
+        std::string Kind;
+        if (std::find(msg::HeaderFile::extensions().begin(),
+                      msg::HeaderFile::extensions().end(),
+                      Ext) != msg::HeaderFile::extensions().end())
+          Kind = msg::HeaderFile::name();
+        else if (std::find(msg::SourceFile::extensions().begin(),
+                           msg::SourceFile::extensions().end(),
+                           Ext) != msg::SourceFile::extensions().end())
+          Kind = msg::SourceFile::name();
+        else
+          Kind = msg::OtherFile::name();
+        auto I = Stat[msg::Statistic::Files].insert(std::make_pair(Kind, 1));
+        if (!I.second)
+          ++I.first->second;
+      }
+      auto &MMP = getAnalysis<MemoryMatcherImmutableWrapper>();
+      Stat[msg::Statistic::Variables].insert(
+          std::make_pair(msg::Analysis::Yes, MMP->Matcher.size()));
+      Stat[msg::Statistic::Variables].insert(
+          std::make_pair(msg::Analysis::No, MMP->UnmatchedAST.size()));
+      std::pair<unsigned, unsigned> Loops(0, 0);
+      auto &SrcMgr = Rewriter.getSourceMgr();
+      for (Function &F : M) {
+        if (isMemoryMarkerIntrinsic(F.getIntrinsicID()) ||
+            isDbgInfoIntrinsic(F.getIntrinsicID()))
+          continue;
+        ++Stat[msg::Statistic::Functions];
+        auto Decl = TfmCtx->getDeclForMangledName(F.getName());
+        if (!Decl)
+          continue;
+        if (SrcMgr.getFileCharacteristic(Decl->getBeginLoc()) !=
+            clang::SrcMgr::C_User)
+          continue;
+        ++Stat[msg::Statistic::UserFunctions];
+        // Analysis are not available for functions without body.
+        if (F.isDeclaration())
+          continue;
+        auto &Provider = getAnalysis<ServerPrivateProvider>(F);
+        auto &LMP = Provider.get<LoopMatcherPass>();
+        Loops.first += LMP.getMatcher().size();
+        Loops.second += LMP.getUnmatchedAST().size();
+        auto [ParallelLoops, NotAnalyzedLoops] = incrementTraitCount(
+            F, *mGlobalOpts, Provider, *mSocket, Stat[msg::Statistic::Traits]);
+        Stat[msg::Statistic::ParallelLoops] += ParallelLoops;
+        Loops.first -= NotAnalyzedLoops;
+        Loops.second += NotAnalyzedLoops;
+      }
+      Stat[msg::Statistic::Loops].insert(
+          std::make_pair(msg::Analysis::Yes, Loops.first));
+      Stat[msg::Statistic::Loops].insert(
+          std::make_pair(msg::Analysis::No, Loops.second));
+    }
   }
-  auto &MMP = getAnalysis<MemoryMatcherImmutableWrapper>();
-  Stat[msg::Statistic::Variables].insert(
-    std::make_pair(msg::Analysis::Yes, MMP->Matcher.size()));
-  Stat[msg::Statistic::Variables].insert(
-    std::make_pair(msg::Analysis::No, MMP->UnmatchedAST.size()));
-  std::pair<unsigned, unsigned> Loops(0, 0);
-  auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
-  for (Function &F : M) {
-    if (isMemoryMarkerIntrinsic(F.getIntrinsicID()) ||
-        isDbgInfoIntrinsic(F.getIntrinsicID()))
-      continue;
-    ++Stat[msg::Statistic::Functions];
-    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
-    if (!Decl)
-      continue;
-    if (SrcMgr.getFileCharacteristic(Decl->getBeginLoc())
-        != clang::SrcMgr::C_User)
-      continue;
-    ++Stat[msg::Statistic::UserFunctions];
-    // Analysis are not available for functions without body.
-    if (F.isDeclaration())
-      continue;
-    auto &Provider = getAnalysis<ServerPrivateProvider>(F);
-    auto &LMP = Provider.get<LoopMatcherPass>();
-    Loops.first += LMP.getMatcher().size();
-    Loops.second += LMP.getUnmatchedAST().size();
-    auto [ParallelLoops, NotAnalyzedLoops] = incrementTraitCount(
-        F, *mGlobalOpts, Provider, *mSocket, Stat[msg::Statistic::Traits]);
-    Stat[msg::Statistic::ParallelLoops] += ParallelLoops;
-    Loops.first -= NotAnalyzedLoops;
-    Loops.second += NotAnalyzedLoops;
-  }
-  Stat[msg::Statistic::Loops].insert(
-    std::make_pair(msg::Analysis::Yes, Loops.first));
-  Stat[msg::Statistic::Loops].insert(
-    std::make_pair(msg::Analysis::No, Loops.second));
   return json::Parser<msg::Statistic>::unparseAsObject(Stat);
 }
 
 std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
     const msg::LoopTree &Request) {
   for (Function &F : M) {
-    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
+    auto *DISub{findMetadata(&F)};
+    if (!DISub)
+      continue;
+    auto *CU{DISub->getUnit()};
+    auto *TfmCtx{dyn_cast_or_null<ClangTransformationContext>(
+        mTfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance())
+      continue;
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (!mVisibleToUser.count(CanonicalFD) ||
-        CanonicalFD->getBeginLoc().getRawEncoding() !=
-          Request[msg::LoopTree::FunctionID])
+    auto DefItr{mVisibleToUser.find(CanonicalFD)};
+    if (DefItr == mVisibleToUser.end() ||
+        DefItr->second->Id != Request[msg::LoopTree::FunctionID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::LoopTree>::unparseAsObject(Request);
     msg::LoopTree LoopTree;
     LoopTree[msg::LoopTree::FunctionID] = Request[msg::LoopTree::FunctionID];
-    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
@@ -1106,7 +1159,7 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
     auto &CFLoopInfo = Provider.get<ClangCFTraitsPass>().getLoopInfo();
     auto &ParallelInfo = Provider.get<ParallelLoopPass>().getParallelLoopInfo();
     for (auto &Match : Matcher) {
-      auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr);
+      auto Loop = getLoopInfo(Match.get<AST>(), SrcMgr, M, *CU);
       auto &LT = Loop[msg::Loop::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::Yes;
       auto CI = CanonicalInfo.find_as(RegionInfo.getRegionFor(Match.get<IR>()));
@@ -1130,7 +1183,7 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
     }
     for (auto &Unmatch : Unmatcher) {
-      auto Loop = getLoopInfo(Unmatch, SrcMgr);
+      auto Loop = getLoopInfo(Unmatch, SrcMgr, M, *CU);
       auto &LT = Loop[msg::Loop::Traits];
       LT[msg::LoopTraits::IsAnalyzed] = msg::Analysis::No;
       LoopTree[msg::LoopTree::Loops].push_back(std::move(Loop));
@@ -1192,14 +1245,14 @@ std::string PrivateServerPass::answerLoopTree(llvm::Module &M,
   return json::Parser<msg::LoopTree>::unparseAsObject(Request);
 }
 
-void PrivateServerPass::collectBuiltinFunctions(clang::DeclContext &DeclCtx,
+void PrivateServerPass::collectBuiltinFunctions(
+    clang::DeclContext &DeclCtx, llvm::Module &M, llvm::DICompileUnit &CU,
+    ClangTransformationContext &TfmCtx, TypeToFunctionMap &TypeToFunc,
     msg::FunctionList &FuncList) {
-  auto &ASTCtx = mTfmCtx->getContext();
-  auto &SrcMgr = ASTCtx.getSourceManager();
   for (auto *D : DeclCtx.decls()) {
     // Lookup for C builtins in CXX unit.
     if (auto *LinkageCtx = dyn_cast<clang::LinkageSpecDecl>(D)) {
-      collectBuiltinFunctions(*LinkageCtx, FuncList);
+      collectBuiltinFunctions(*LinkageCtx, M, CU, TfmCtx, TypeToFunc, FuncList);
       continue;
     }
     clang::Decl *DeclToCheck = D;
@@ -1213,58 +1266,90 @@ void PrivateServerPass::collectBuiltinFunctions(clang::DeclContext &DeclCtx,
       if (ID == 0)
         continue;
       FD = FD->getCanonicalDecl();
-      if (!mVisibleToUser.insert(FD).second)
+      if (mVisibleToUser.count(FD))
         continue;
-      msg::Function Func;
-      SmallString<64> ExtraName;
-      Func[msg::Function::Name] = getFunctionName(*FD, ExtraName).str();
-      // Canonical declaration may differs from declaration which has a body.
-      Func[msg::Function::ID] = FD->getBeginLoc().getRawEncoding();
-      Func[msg::Function::User] = false;
-      Func[msg::Function::StartLocation] =
-          getLocation(FD->getBeginLoc(), SrcMgr);
-      Func[msg::Function::EndLocation] =
-          getLocation(FD->getEndLoc(), SrcMgr);
-      if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
-          !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
-          !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
-        Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG]
-          = msg::Analysis::No;
-      FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+      auto [TypeItr, IsNew] =
+          TypeToFunc.try_emplace(FD->getType().getAsString());
+      if (!TypeItr->second.get<clang::FunctionDecl>().insert(FD).second)
+        continue;
+      const clang::FunctionDecl *DefinitionFD{FD};
+      bool HasBody{FD->getBody(DefinitionFD) != nullptr};
+      if (IsNew) {
+        mDefinitions.push_back(std::make_unique<Definition>(
+            &CU, &TfmCtx, const_cast<clang::FunctionDecl *>(DefinitionFD),
+            *toId(&M, &CU, DefinitionFD->getBeginLoc())));
+        TypeItr->second.get<Definition>() = mDefinitions.back().get();
+      } else if (HasBody) {
+        TypeItr->second.get<Definition>()->CU = &CU;
+        TypeItr->second.get<Definition>()->TfmCtx = &TfmCtx;
+        TypeItr->second.get<Definition>()->Body =
+            const_cast<clang::FunctionDecl *>(DefinitionFD);
+        TypeItr->second.get<Definition>()->Id  =
+            *toId(&M, &CU, DefinitionFD->getBeginLoc());
+      }
     }
   }
 }
 
 std::string PrivateServerPass::answerFileList() {
   msg::FileList FileList;
-  auto &ASTCtx = mTfmCtx->getContext();
-  auto &SrcMgr = ASTCtx.getSourceManager();
-  for (auto &Info : make_range(SrcMgr.fileinfo_begin(), SrcMgr.fileinfo_end())) {
-    msg::File File;
-    File[msg::File::ID] = Info.first->getUID();
-    File[msg::File::Name] = std::string(Info.first->getName());
-    FileList[msg::FileList::Files].emplace_back(std::move(File));
+  for (auto &&[CU, TfmCtxBase] : mTfmInfo->contexts()) {
+    if (!TfmCtxBase || !TfmCtxBase->hasInstance())
+      continue;
+    if (auto *TfmCtx{
+            dyn_cast_or_null<ClangTransformationContext>(TfmCtxBase)}) {
+      auto &ASTCtx = TfmCtx->getContext();
+      auto &SrcMgr = ASTCtx.getSourceManager();
+      for (auto &Info :
+           make_range(SrcMgr.fileinfo_begin(), SrcMgr.fileinfo_end())) {
+        msg::File File;
+        File[msg::File::ID] = Info.first->getUniqueID();
+        File[msg::File::Name] = std::string(Info.first->getName());
+        FileList[msg::FileList::Files].emplace_back(std::move(File));
+      }
+    }
   }
   return json::Parser<msg::FileList>::unparseAsObject(FileList);
 }
 
 std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
   msg::FunctionList FuncList;
-  auto &ASTCtx = mTfmCtx->getContext();
-  auto &SrcMgr = ASTCtx.getSourceManager();
   for (Function &F : M) {
-    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
+    auto *DISub{findMetadata(&F)};
+    if (!DISub)
+      continue;
+    auto *CU{DISub->getUnit()};
+    auto *TfmCtx{dyn_cast_or_null<ClangTransformationContext>(
+        mTfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance())
+      continue;
+    auto &ASTCtx = TfmCtx->getContext();
+    auto &SrcMgr = ASTCtx.getSourceManager();
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto FuncDecl = Decl->getAsFunction();
     auto *CanonicalD = FuncDecl->getCanonicalDecl();
-    mVisibleToUser.insert(CanonicalD);
+    mDefinitions.push_back(std::make_unique<Definition>(
+        CU, TfmCtx, Decl, *toId(&M, CU, CanonicalD->getBeginLoc())));
+    mVisibleToUser.try_emplace(CanonicalD, mDefinitions.back().get());
+    for (auto &&[CU, TfmCtxBase] : mTfmInfo->contexts()) {
+      if (!TfmCtxBase || !TfmCtxBase->hasInstance() ||
+          !isa<ClangTransformationContext>(TfmCtxBase))
+        continue;
+      auto ExternalDecl{cast<ClangTransformationContext>(TfmCtxBase)
+                            ->getDeclForMangledName(F.getName())};
+      if (!ExternalDecl)
+        continue;
+      mVisibleToUser.try_emplace(ExternalDecl->getCanonicalDecl(),
+                                 mDefinitions.back().get());
+    }
     assert(FuncDecl && "Function declaration must not be null!");
     msg::Function Func;
     SmallString<64> ExtraName;
     Func[msg::Function::Name] = getFunctionName(*FuncDecl, ExtraName).str();
     // Canonical declaration may differs from declaration which has a body.
-    Func[msg::Function::ID] = CanonicalD->getBeginLoc().getRawEncoding();
+    Func[msg::Function::ID] = mDefinitions.back()->Id;
     Func[msg::Function::User] =
         (SrcMgr.getFileCharacteristic(Decl->getBeginLoc()) ==
          clang::SrcMgr::C_User);
@@ -1303,24 +1388,68 @@ std::string PrivateServerPass::answerFunctionList(llvm::Module &M) {
     }
     FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
   }
-  collectBuiltinFunctions(*ASTCtx.getTranslationUnitDecl(), FuncList);
+  TypeToFunctionMap TypeToFunc;
+  for (auto &&[CU, TfmCtxBase] : mTfmInfo->contexts()) {
+    if (!TfmCtxBase || !TfmCtxBase->hasInstance() ||
+        !isa<ClangTransformationContext>(TfmCtxBase))
+      continue;
+    auto &TfmCtx{cast<ClangTransformationContext>(*TfmCtxBase)};
+    collectBuiltinFunctions(*TfmCtx.getContext().getTranslationUnitDecl(), M,
+                            *CU, TfmCtx, TypeToFunc, FuncList);
+  }
+  for (auto &Funcs : TypeToFunc) {
+    auto *TfmCtxBase{Funcs.second.get<Definition>()->TfmCtx};
+    if (!isa<ClangTransformationContext>(TfmCtxBase))
+      continue;
+    auto *TfmCtx{cast<ClangTransformationContext>(TfmCtxBase)};
+    auto *FD{cast<clang::FunctionDecl>(Funcs.second.get<Definition>()->Body)};
+    auto &ASTCtx{TfmCtx->getContext()};
+    auto &SrcMgr{ASTCtx.getSourceManager()};
+    msg::Function Func;
+    SmallString<64> ExtraName;
+    Func[msg::Function::Name] = getFunctionName(*FD, ExtraName).str();
+    // Canonical declaration may differs from declaration which has a body.
+    Func[msg::Function::ID] = Funcs.second.get<Definition>()->Id;
+    Func[msg::Function::User] = false;
+    Func[msg::Function::StartLocation] = getLocation(FD->getBeginLoc(), SrcMgr);
+    Func[msg::Function::EndLocation] = getLocation(FD->getEndLoc(), SrcMgr);
+    auto ID = FD->getBuiltinID();
+    assert(ID != 0 && "It must be a builtin function!");
+    if (ASTCtx.BuiltinInfo.isNoThrow(ID) &&
+        !ASTCtx.BuiltinInfo.isNoReturn(ID) &&
+        !ASTCtx.BuiltinInfo.isReturnsTwice(ID))
+      Func[msg::Function::Traits][msg::FunctionTraits::UnsafeCFG] =
+          msg::Analysis::No;
+    FuncList[msg::FunctionList::Functions].push_back(std::move(Func));
+    for (auto *FD : Funcs.second.get<clang::FunctionDecl>())
+      mVisibleToUser.try_emplace(FD, Funcs.second.get<Definition>());
+  }
   return json::Parser<msg::FunctionList>::unparseAsObject(FuncList);
 }
 
 std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
     const msg::CalleeFuncList &Request) {
   for (Function &F : M) {
-    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
+    auto *DISub{findMetadata(&F)};
+    if (!DISub)
+      continue;
+    auto *CU{DISub->getUnit()};
+    auto *TfmCtx{dyn_cast_or_null<ClangTransformationContext>(
+        mTfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance())
+      continue;
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (CanonicalFD->getBeginLoc().getRawEncoding() !=
-        Request[msg::CalleeFuncList::FuncID])
+    auto DefItr{mVisibleToUser.find(CanonicalFD)};
+    if (DefItr == mVisibleToUser.end() ||
+        DefItr->second->Id != Request[msg::CalleeFuncList::FuncID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
     msg::CalleeFuncList StmtList = Request;
-    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &Matcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &Unmatcher = Provider.get<LoopMatcherPass>().getUnmatchedAST();
@@ -1332,15 +1461,15 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         bcl::tagged<clang::Stmt *, AST>,
         bcl::tagged<Loop *, IR>> Loop(nullptr, nullptr);
       for (auto Match : Matcher)
-        if (Match.get<AST>()->getBeginLoc().getRawEncoding() ==
-            StmtList[msg::CalleeFuncList::LoopID]) {
+        if (auto Id{toId(&M, CU, Match.get<AST>()->getBeginLoc())};
+            Id && *Id == StmtList[msg::CalleeFuncList::LoopID]) {
           Loop = Match;
           break;
         }
       if (!Loop.get<AST>()) {
         for (auto Unmatch : Unmatcher)
-          if (Unmatch->getBeginLoc().getRawEncoding() ==
-              StmtList[msg::CalleeFuncList::LoopID]) {
+          if (auto Id{toId(&M, CU, Unmatch->getBeginLoc())};
+              Id && *Id == StmtList[msg::CalleeFuncList::LoopID]) {
             Loop.get<AST>() = Unmatch;
             break;
           }
@@ -1376,11 +1505,12 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
         (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Goto;
       } else if (auto CE = dyn_cast<clang::CallExpr>(T)) {
         auto FD = CE->getDirectCallee();
-        if (FD && mVisibleToUser.count(FD = FD->getCanonicalDecl())) {
+        auto DefItr{FD ? mVisibleToUser.find(FD = FD->getCanonicalDecl())
+                       : mVisibleToUser.end()};
+        if (DefItr != mVisibleToUser.end()) {
           F = &FuncMap[FD];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
-          (*F)[msg::CalleeFuncInfo::CalleeID] =
-              FD->getBeginLoc().getRawEncoding();
+          (*F)[msg::CalleeFuncInfo::CalleeID] = DefItr->second->Id;
         } else {
           F = &StmtMap[static_cast<std::size_t>(msg::StmtKind::Call)];
           (*F)[msg::CalleeFuncInfo::Kind] = msg::StmtKind::Call;
@@ -1400,19 +1530,28 @@ std::string PrivateServerPass::answerCalleeFuncList(llvm::Module &M,
   return json::Parser<msg::CalleeFuncList>::unparseAsObject(Request);
 }
 
-std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
+std::string PrivateServerPass::answerAliasTree(llvm::Module &Module,
   const msg::AliasTree &Request) {
-  for (Function &F : M) {
-    auto Decl = mTfmCtx->getDeclForMangledName(F.getName());
+  for (Function &F : Module) {
+    auto *DISub{findMetadata(&F)};
+    if (!DISub)
+      continue;
+    auto *CU{DISub->getUnit()};
+    auto *TfmCtx{dyn_cast_or_null<ClangTransformationContext>(
+        mTfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance())
+      continue;
+    auto Decl = TfmCtx->getDeclForMangledName(F.getName());
     if (!Decl)
       continue;
     auto CanonicalFD = Decl->getCanonicalDecl()->getAsFunction();
-    if (CanonicalFD->getBeginLoc().getRawEncoding() !=
-          Request[msg::AliasTree::FuncID])
+    auto DefItr{mVisibleToUser.find(CanonicalFD)};
+    if (DefItr == mVisibleToUser.end() ||
+        DefItr->second->Id != Request[msg::AliasTree::FuncID])
       continue;
     if (F.isDeclaration())
       return json::Parser<msg::AliasTree>::unparseAsObject(Request);
-    auto &SrcMgr = mTfmCtx->getContext().getSourceManager();
+    auto &SrcMgr = TfmCtx->getContext().getSourceManager();
     auto &Provider = getAnalysis<ServerPrivateProvider>(F);
     auto &LoopMatcher = Provider.get<LoopMatcherPass>().getMatcher();
     auto &MemoryMatcher = Provider.get<ClangDIMemoryMatcherPass>().getMatcher();
@@ -1421,8 +1560,8 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
         bcl::tagged<clang::Stmt *, AST>,
         bcl::tagged<Loop *, IR>> Loop(nullptr, nullptr);
       for (auto Match : LoopMatcher)
-        if (Match.get<AST>()->getBeginLoc().getRawEncoding() ==
-            Request[msg::AliasTree::LoopID]) {
+        if (auto Id{toId(&Module, CU, Match.get<AST>()->getBeginLoc())};
+            Id && *Id == Request[msg::AliasTree::LoopID]) {
           Loop = Match;
           break;
         }
@@ -1483,7 +1622,7 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
               if (Itr != MemoryMatcher.end()) {
                 auto VD = Itr->get<AST>()->getCanonicalDecl();
                 M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
-                  VD->getLocation().getRawEncoding();
+                    *toId(&Module, CU, VD->getLocation());
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
                   VD->getName().str();
                 M[msg::MemoryLocation::Object][msg::SourceObject::DeclLocation] =
@@ -1518,15 +1657,16 @@ std::string PrivateServerPass::answerAliasTree(llvm::Module &M,
             if (auto SubMD = dyn_cast<DISubprogram>(MD)) {
               M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
                 SubMD->getName().str();
-              if (auto *D = mTfmCtx->getDeclForMangledName(
+              if (auto *D = TfmCtx->getDeclForMangledName(
                     SubMD->getLinkageName())) {
                 auto *FD = D->getCanonicalDecl()->getAsFunction();
                 SmallString<64> ExtraName;
                 M[msg::MemoryLocation::Object][msg::SourceObject::Name] =
                     getFunctionName(*FD, ExtraName).str();
-                if (mVisibleToUser.count(FD))
+                if (auto DefItr{mVisibleToUser.find(FD)};
+                    DefItr != mVisibleToUser.end())
                   M[msg::MemoryLocation::Object][msg::SourceObject::ID] =
-                      FD->getBeginLoc().getRawEncoding();
+                      DefItr->second->Id;
                 M[msg::MemoryLocation::Object][msg::SourceObject::DeclLocation] =
                     getLocation(FD->getBeginLoc(), SrcMgr);
               } else if (!ClonedUM->isExec() && !ClonedUM->isResult()) {
@@ -1566,19 +1706,30 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
     M.getContext().emitError("intrusive connection is not established");
     return false;
   }
-  auto &TfmInfoPass{ getAnalysis<TransformationEnginePass>() };
+  auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+  auto CXXCUItr{find_if(CUs->operands(), [](auto *MD) {
+    auto *CU{dyn_cast<DICompileUnit>(MD)};
+    return CU &&
+           (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()));
+  })};
+  if (CXXCUItr == CUs->op_end()) {
+    M.getContext().emitError(
+        "cannot transform sources"
+        ": transformation of C/C++ sources are only possible now");
+    return false;
+  }
+  auto &TfmInfoPass{getAnalysis<TransformationEnginePass>()};
   mTfmInfo = TfmInfoPass ? &TfmInfoPass.get() : nullptr;
-  mTfmCtx = mTfmInfo ? mTfmInfo->getContext(M) : nullptr;
+  if (!mTfmInfo) {
+    M.getContext().emitError("cannot transform sources"
+                             ": transformation context is not available");
+    return false;
+  }
   auto &SocketInfo = getAnalysis<AnalysisSocketImmutableWrapper>().get();
   mSocket = SocketInfo.getActiveSocket();
   assert(mSocket && "Active socket must be specified!");
   mGlobalsAA = &getAnalysis<GlobalsAAWrapperPass>().getResult();
   mGlobalOpts = &getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
-    M.getContext().emitError("can not access sources"
-        ": transformation context is not available");
-    return false;
-  }
   ServerPrivateProvider::initialize<TransformationEnginePass>(
     [this](TransformationEnginePass &TEP) {
       TEP.set(*mTfmInfo);
@@ -1610,6 +1761,10 @@ bool PrivateServerPass::runOnModule(llvm::Module &M) {
       [&DIMEnvWrapper](DIMemoryEnvironmentWrapper &Wrapper) {
     Wrapper.set(*DIMEnvWrapper);
   });
+  auto &GAP = getAnalysis<GlobalsAccessWrapper>();
+  if (GAP)
+    ServerPrivateProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   while (mConnection->answer(
       [this, &M](const std::string &Request) -> std::string {
     msg::Diagnostic Diag(msg::Status::Error);
@@ -1646,6 +1801,7 @@ void PrivateServerPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<GlobalOptionsImmutableWrapper>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<GlobalsAAWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
   AU.setPreservesAll();
 }
 

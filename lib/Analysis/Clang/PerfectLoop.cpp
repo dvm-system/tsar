@@ -25,7 +25,9 @@
 #include "tsar/Analysis/Clang/PerfectLoop.h"
 #include "tsar/Analysis/DFRegionInfo.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -120,11 +122,16 @@ private:
 
 bool ClangPerfectLoopPass::runOnFunction(Function &F) {
   releaseMemory();
-  auto M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo)
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
     return false;
-  auto TfmCtx = TfmInfo->getContext(*M);
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
@@ -139,7 +146,7 @@ bool ClangPerfectLoopPass::runOnFunction(Function &F) {
 
 void ClangPerfectLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<DFRegionInfoPass>();
+  AU.addRequiredTransitive<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();
   AU.setPreservesAll();
 }

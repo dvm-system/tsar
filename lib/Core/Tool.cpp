@@ -32,9 +32,6 @@
 #include "tsar/Frontend/Clang/ASTMergeAction.h"
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Support/GlobalOptions.h"
-#ifdef APC_FOUND
-# include "tsar/APC/Utils.h"
-#endif
 #include <clang/Frontend/FrontendActions.h>
 #include <clang/Tooling/CommonOptionsParser.h>
 #include <clang/Tooling/Tooling.h>
@@ -43,10 +40,6 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/CommandLine.h>
-#include <llvm/Support/Host.h>
-#ifdef lp_solve_FOUND
-# include <lp_solve/lp_solve_config.h>
-#endif
 
 using namespace clang;
 using namespace clang::tooling;
@@ -92,9 +85,6 @@ public:
 
 /// Represents possible options for TSAR.
 struct Options : private bcl::Uncopyable {
-  /// This is a version printer for TSAR.
-  static void printVersion(raw_ostream &OS);
-
   /// Returns all possible analyzer options.
   static Options & get() {
     static Options Opts;
@@ -147,6 +137,7 @@ struct Options : private bcl::Uncopyable {
         DefaultQueryManager::PrintPassGroup>>> PrintOnly;
   llvm::cl::list<unsigned> PrintStep;
   llvm::cl::opt<bool> PrintFilename;
+  llvm::cl::opt<bool> PrintToolVersion;
   llvm::cl::opt<bool> DiscardValueNames;
   llvm::cl::opt<bool> NoDiscardValueNames;
 
@@ -248,6 +239,8 @@ Options::Options() :
     cl::desc("Print results for a specified processing steps (comma separated list of steps)")),
   PrintFilename("print-filename", cl::cat(DebugCategory),
     cl::desc("Print only names of files instead of full paths")),
+  PrintToolVersion("print-version", cl::cat(DebugCategory),
+    cl::desc("Print versions of available tools")),
   DiscardValueNames("fdiscard-value-names", cl::cat(DebugCategory),
     cl::desc("Discard value names in LLVM IR")),
   NoDiscardValueNames("fno-discard-value-names", cl::cat(DebugCategory),
@@ -352,37 +345,13 @@ Options::Options() :
   Opts["print-before-all"]->addCategory(DebugCategory);
   Opts["print-after-all"]->addCategory(DebugCategory);
   Opts["filter-print-funcs"]->addCategory(DebugCategory);
-  cl::AddExtraVersionPrinter(printVersion);
+  cl::AddExtraVersionPrinter(printToolVersion);
   std::vector<cl::OptionCategory *> Categories;
   Categories.push_back(&CompileCategory);
   Categories.push_back(&DebugCategory);
   Categories.push_back(&AnalysisCategory);
   Categories.push_back(&TransformCategory);
   cl::HideUnrelatedOptions(Categories);
-}
-
-void Options::printVersion(raw_ostream &OS) {
-  OS << "TSAR (" << TSAR_HOMEPAGE_URL << "):\n";
-  OS << "  version " << TSAR_VERSION_STRING << "\n";
-#ifdef APC_FOUND
-  OS << "  with "; printAPCVersion(OS);
-#endif
-#ifdef lp_solve_FOUND
-  OS << "  with lp_solve(" << LP_SOLVE_HOMEPAGE_URL << "):\n";
-  OS << "    version " << LP_SOLVE_VERSION_STRING << "\n";
-#endif
-#ifndef __OPTIMIZE__
-  OS << "  DEBUG build";
-#else
-  OS << "  Optimized build";
-#endif
-#ifndef NDEBUG
-  OS << " with assertions";
-#endif
-  OS << ".\n";
-  OS << "  Built " << __DATE__ << " (" << __TIME__ << ").\n";
-  auto CPU = sys::getHostCPUName();
-  OS << "  Host CPU: " << ((CPU != "generic") ? CPU : "(unknown)") << "\n";
 }
 
 /// Add special arguments for LLVM passes. This arguments should not be
@@ -466,6 +435,7 @@ void Tool::storePrintOptions(OptionList &IncompatibleOpts) {
       DefaultQueryManager::PrintPassGroup::getPassRegistry().begin(),
       DefaultQueryManager::PrintPassGroup::getPassRegistry().end());
   }
+  mGlobalOpts.PrintToolVersion = Options::get().PrintToolVersion;
   mGlobalOpts.PrintFilenameOnly = Options::get().PrintFilename;
   if (mGlobalOpts.PrintFilenameOnly && !mPrint)
     errs() << "WARNING: The -print-filename option is ignored when "
@@ -497,6 +467,7 @@ void Tool::storeCLOptions() {
   mCommandLine.emplace_back("-g");
   mCommandLine.emplace_back("-fstandalone-debug");
   mCommandLine.emplace_back("-gcolumn-info");
+  mCommandLine.emplace_back("-Qunused-arguments");
   for (auto &Warning : Options::get().EnableWarnings)
     mCommandLine.push_back("-W" + Warning);
   if (Options::get().CaretDiagnostics)

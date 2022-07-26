@@ -29,6 +29,7 @@
 #include "tsar/Analysis/Clang/CanonicalLoop.h"
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include "tsar/Analysis/Memory/GlobalsAccess.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/TransformationContext.h"
 #include "tsar/Support/IRUtils.h"
@@ -105,6 +106,7 @@ INITIALIZE_PASS_DEPENDENCY(InstrumentationPassProvider)
 INITIALIZE_PASS_DEPENDENCY(TransformationEnginePass)
 INITIALIZE_PASS_DEPENDENCY(MemoryMatcherImmutableWrapper)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
 INITIALIZE_PASS_END(InstrumentationPass, "instr-llvm",
   "LLVM IR Instrumentation", false, false)
 
@@ -120,6 +122,9 @@ bool InstrumentationPass::runOnModule(Module &M) {
     [&MMWrapper](MemoryMatcherImmutableWrapper &Wrapper) {
       Wrapper.set(*MMWrapper);
   });
+  if (auto &GAP = getAnalysis<GlobalsAccessWrapper>())
+    InstrumentationPassProvider::initialize<GlobalsAccessWrapper>(
+        [&GAP](GlobalsAccessWrapper &Wrapper) { Wrapper.set(*GAP); });
   Instrumentation::visit(M, *this);
   Function *EntryPoint = nullptr;
   if (!mInstrEntry.empty())
@@ -138,6 +143,7 @@ void InstrumentationPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<InstrumentationPassProvider>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<GlobalsAccessWrapper>();
 }
 
 ModulePass * llvm::createInstrumentationPass(
@@ -253,9 +259,12 @@ void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
 
 void Instrumentation::reserveIncompleteDIStrings(llvm::Module &M) {
   auto DbgLocIdx = DIStringRegister::indexOfItemType<DILocation *>();
+  SmallString<128> Path;
+  auto EC{sys::fs::real_path(M.getSourceFileName(), Path)};
   createInitDICall(
-    Twine("type=") + "file_name" + "*" +
-    "file=" + M.getSourceFileName() + "*" + "*", DbgLocIdx);
+      Twine("type=") + "file_name" + "*" + "file=" +
+          (EC ? StringRef{M.getSourceFileName()} : StringRef{Path}) + "*" + "*",
+      DbgLocIdx);
 }
 
 void Instrumentation::visitAllocaInst(llvm::AllocaInst &I) {
@@ -495,11 +504,15 @@ void Instrumentation::loopBeginInstr(Loop *L, DIStringRegister::IdTy DILoopIdx,
   BoundFlag |= Step ? LoopStepIsKnown : LoopBoundIsUnknown;
   BoundFlag |= !Signed ? LoopBoundUnsigned : LoopBoundIsUnknown;
   auto MDFunc = Header->getParent()->getSubprogram();
-  auto Filename = MDFunc ? MDFunc->getFilename() :
-    StringRef(Header->getModule()->getSourceFileName());
+  SmallString<128> PathToFile;
+  if (MDFunc && MDFunc->getFile())
+    getAbsolutePath(*MDFunc, PathToFile);
+  else if (!sys::fs::real_path(Header->getModule()->getSourceFileName(),
+                               PathToFile))
+    PathToFile = Header->getModule()->getSourceFileName();
   createInitDICall(
     Twine("type=") + "seqloop" + "*" +
-    "file=" + Filename + "*" +
+    "file=" + PathToFile + "*" +
     "bounds=" + Twine(BoundFlag) + "*" +
     StartLoc + EndLoc + "*", DILoopIdx);
   auto *DILoop = createPointerToDI(DILoopIdx, *InsertBefore);
@@ -598,19 +611,22 @@ void Instrumentation::regFunction(Value &F, Type *ReturnTy, unsigned Rank,
   LLVM_DEBUG(dbgs() << "[INSTR]: register function ";
     F.printAsOperand(dbgs()); dbgs() << "\n");
   std::string DeclStr;
-  StringRef Filename;
+  SmallString<128> Filename{M.getSourceFileName()};
   if (!MD) {
     if (!F.getName().empty())
       DeclStr = (Twine("name1=") + F.getName() + "*").str();
-    Filename = M.getSourceFileName();
+    if (!sys::fs::real_path(M.getSourceFileName(), Filename))
+      Filename = M.getSourceFileName();
   } else if (auto DI = dyn_cast<DISubprogram>(MD)) {
     DeclStr = ("line1=" + Twine(DI->getLine()) + "*" +
       "name1=" + DI->getName() + "*").str();
-    Filename = DI->getFilename();
+    if (DI->getFile())
+      getAbsolutePath(*DI, Filename);
   } else if (auto DI = dyn_cast<DIVariable>(MD)) {
     DeclStr = ("line1=" + Twine(DI->getLine()) + "*" +
       "name1=" + DI->getName() + "*").str();
-    Filename = DI->getFilename();
+    if (DI->getFile())
+      getAbsolutePath(*DI->getFile(), Filename);
   }
   auto ReturnTypeId = mTypes.regItem(ReturnTy).first;
   createInitDICall(Twine("type=") + "function" + "*" +
@@ -1036,12 +1052,15 @@ auto Instrumentation::regDebugLoc(
   auto DbgLocInfo = mDIStrings.regItem(DbgLoc.get());
   if (!DbgLocInfo.second)
     return DbgLocInfo.first;
-  auto *Scope = cast<DIScope>(DbgLoc->getScope());
   std::string ColStr = !DbgLoc.getCol() ? std::string("") :
     ("col1=" + Twine(DbgLoc.getCol()) + "*").str();
+  auto *Scope = cast<DIScope>(DbgLoc->getScope());
+  SmallString<128> Filename;
+  if (Scope->getFile())
+    getAbsolutePath(*Scope, Filename);
   createInitDICall(
     Twine("type=") + "file_name" + "*" +
-    "file=" + Scope->getFilename() + "*" +
+    "file=" + Filename+ "*" +
     "line1=" + Twine(DbgLoc.getLine()) + "*" + ColStr + "*", DbgLocInfo.first);
   return DbgLocInfo.first;
 }
@@ -1076,13 +1095,21 @@ void Instrumentation::regValueArgs(Value *V, Type *T,
   assert(SizeArgTy && "Type of ArraySize parameter of registration function must not be null!");
   LLVM_DEBUG(dbgs()<<"[INSTR]: register variable "<<(DIM ? "" : "without metadata ");
     V->printAsOperand(dbgs()); dbgs() << "\n");
-  auto DeclStr = DIM && DIM->isValid() ? DIM->Loc ?
-    (Twine("file=") + DIM->Loc->getFilename() + "*" +
+  SmallString<128> Filename;
+  auto DeclStr =
+      DIM && DIM->isValid() ? DIM->Loc && DIM->Loc->getScope()->getFile() ?
+    (Twine("file=") + getAbsolutePath(*DIM->Loc->getScope(), Filename) + "*" +
       "line1=" + Twine(DIM->Loc->getLine()) + "*"
       "col1=" + Twine(DIM->Loc->getColumn()) + "*").str() :
-    (Twine("file=") + DIM->Var->getFilename() + "*" +
+    (Twine("file=") +
+      (DIM->Var->getFile() ?
+        getAbsolutePath(*DIM->Var->getFile(), Filename) :
+        StringRef(Filename)) + "*" +
       "line1=" + Twine(DIM->Var->getLine()) + "*").str() :
-    (Twine("file=") + M.getSourceFileName() + "*").str();
+    (Twine("file=") +
+      (sys::fs::real_path(M.getSourceFileName(), Filename) ?
+        Filename = M.getSourceFileName(), Filename : Filename)
+      + "*").str();
   std::string NameStr;
   if (DIM && DIM->isValid())
     if (auto DWLang = getLanguage(*DIM->Var)) {

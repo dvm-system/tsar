@@ -25,6 +25,7 @@
 #include "tsar/Analysis/Clang/MemoryMatcher.h"
 #include "tsar/Analysis/Clang/Matcher.h"
 #include "tsar/Analysis/Clang/Passes.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include <clang/AST/ASTContext.h>
 #include <clang/AST/Decl.h>
@@ -124,9 +125,11 @@ STATISTIC(NumNonMatchASTMemory, "Number of non-matched AST variables");
 
 namespace {
 /// This matches allocas (IR) and variables (AST).
-class MatchAllocaVisitor :
-  public MatchASTBase<Value *, VarDecl *>,
-  public RecursiveASTVisitor<MatchAllocaVisitor> {
+class MatchAllocaVisitor
+    : public MatchASTBase<Value *, VarDecl *, DILocation *, DILocationMapInfo,
+                          unsigned, DenseMapInfo<unsigned>,
+                          MemoryMatchInfo::MemoryMatcher>,
+      public RecursiveASTVisitor<MatchAllocaVisitor> {
 public:
   MatchAllocaVisitor(SourceManager &SrcMgr, Matcher &MM,
     UnmatchedASTSet &Unmatched, LocToIRMap &LocMap, LocToASTMap &MacroMap) :
@@ -201,16 +204,24 @@ bool MemoryMatcherPass::runOnModule(llvm::Module &M) {
   Storage.releaseMemory();
   auto &MatchInfo = Storage.getMatchInfo();
   getAnalysis<MemoryMatcherImmutableWrapper>().set(MatchInfo);
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
   if (!TfmInfo)
     return false;
-  auto TfmCtx = TfmInfo->getContext(M);
-  if (!TfmCtx || !TfmCtx->hasInstance())
-    return false;
-  auto &SrcMgr = TfmCtx->getRewriter().getSourceMgr();
+  DenseMap<Value *, TinyPtrVector<VarDecl *>> Globals;
   for (Function &F : M) {
     if (F.empty())
       continue;
+    auto *DISub{findMetadata(&F)};
+    if (!DISub)
+      continue;
+    auto *CU{DISub->getUnit()};
+    if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+      continue;
+    auto *TfmCtx{
+        dyn_cast_or_null<ClangTransformationContext>(TfmInfo->getContext(*CU))};
+    if (!TfmCtx || !TfmCtx->hasInstance())
+      continue;
+    auto &SrcMgr{TfmCtx->getRewriter().getSourceMgr()};
     MatchAllocaVisitor::LocToIRMap LocToAlloca;
     MatchAllocaVisitor::LocToASTMap LocToMacro;
     MatchAllocaVisitor MatchAlloca(SrcMgr,
@@ -237,16 +248,21 @@ bool MemoryMatcherPass::runOnModule(llvm::Module &M) {
       }    }
     MatchAlloca.matchInMacro(
       NumMatchMemory, NumNonMatchASTMemory, NumNonMatchIRMemory);
-  }
-  for (auto &GlobalVar : M.globals()) {
-    if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
-      MatchInfo.Matcher.emplace(
-        cast<VarDecl>(D->getCanonicalDecl()), cast<Value>(&GlobalVar));
-      ++NumMatchMemory;
-    } else {
-      ++NumNonMatchIRMemory;
+    for (auto &GlobalVar : M.globals()) {
+      if (auto D = TfmCtx->getDeclForMangledName(GlobalVar.getName())) {
+        Globals.try_emplace(&GlobalVar)
+            .first->second.push_back(cast<VarDecl>(D->getCanonicalDecl()));
+        ++NumMatchMemory;
+      } else {
+        ++NumNonMatchIRMemory;
+      }
     }
   }
+  tsar::ListBimap<
+    bcl::tagged<clang::VarDecl*, tsar::AST>,
+    bcl::tagged<llvm::Value *, tsar::IR>> MM;
+  for (auto &&[V, Decls] : Globals)
+    MatchInfo.Matcher.emplace(std::move(Decls), V);
   return false;
 }
 

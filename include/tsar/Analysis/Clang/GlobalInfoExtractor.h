@@ -28,12 +28,14 @@
 #define TSAR_GLOBAL_INFO_EXTRACTOR_H
 
 #include "tsar/Analysis/Clang/Passes.h"
+#include "tsar/ADT/DenseMapTraits.h"
 #include <bcl/utility.h>
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Basic/SourceLocation.h>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/ADT/DenseSet.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringSet.h>
 #include <llvm/Pass.h>
@@ -45,6 +47,8 @@ class NamedDecl;
 }
 
 namespace tsar {
+class TransformationContextBase;
+
 /// \brief This recursive visitor collects global information about
 /// a translation unit.
 ///
@@ -227,6 +231,22 @@ private:
   /// is traversed at this moment.
   clang::Decl *mOutermostDecl = nullptr;
 };
+
+struct ClangGlobalInfo {
+  /// Raw objects in a source code.
+  struct RawInfo {
+    llvm::StringMap<clang::SourceLocation> Macros;
+    llvm::StringMap<clang::SourceLocation> Includes;
+    llvm::StringSet<> Identifiers;
+  };
+
+  ClangGlobalInfo(const clang::SourceManager &SM,
+                  const clang::LangOptions &LangOpts)
+      : GIE(SM, LangOpts) {}
+
+  GlobalInfoExtractor GIE;
+  RawInfo RI;
+};
 }
 
 namespace llvm {
@@ -234,13 +254,26 @@ class Module;
 
 /// This pass collects global information about a translation unit.
 class ClangGlobalInfoPass : public ModulePass, private bcl::Uncopyable {
+  using GlobalInfoMap = DenseMap<tsar::TransformationContextBase *,
+                                 std::unique_ptr<tsar::ClangGlobalInfo>>;
 public:
-  /// Raw objects in a source code.
-  struct RawInfo {
-    StringMap<clang::SourceLocation> Macros;
-    StringMap<clang::SourceLocation> Includes;
-    StringSet<> Identifiers;
+  using value_type = bcl::tagged_pair<
+      bcl::tagged<tsar::TransformationContextBase *,
+                  tsar::TransformationContextBase>,
+      bcl::tagged<tsar::ClangGlobalInfo *, tsar::ClangGlobalInfo>>;
+
+private:
+  struct iterator_helper {
+    value_type & operator()(GlobalInfoMap::value_type &V) const {
+      Storage = value_type{ V.first, V.second.get() };
+      return Storage;
+    }
+    mutable value_type Storage;
   };
+
+public:
+  using iterator =
+      llvm::mapped_iterator<GlobalInfoMap::iterator, iterator_helper>;
 
   static char ID;
 
@@ -252,33 +285,38 @@ public:
   bool runOnModule(llvm::Module &M) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-  void releaseMemory() override {
-    mGIE.reset();
-    mRawInfo.Macros.clear();
-    mRawInfo.Includes.clear();
-    mRawInfo.Identifiers.clear();
-  }
+  void releaseMemory() override { mGI.clear(); }
 
-  /// Returns information about global objects which are presented in AST.
-  const tsar::GlobalInfoExtractor & getGlobalInfo() const noexcept {
-    return *mGIE;
-  }
-
-  ///\brief Returns raw information about objects in a source code.
+  /// Return information about global objects which are presented in AST and
+  /// raw information about objects in a source code.
   ///
   /// Note, that if there are several macro definitions with the same name
   /// (or includes of the same file), then only the first one will be remembered.
-  RawInfo & getRawInfo() noexcept { return mRawInfo; }
+  const tsar::ClangGlobalInfo *
+  getGlobalInfo(tsar::TransformationContextBase *TfmCtx) const {
+    assert(TfmCtx && "Transfomration context must not be null!");
+    auto I{mGI.find(TfmCtx)};
+    return I == mGI.end() ? nullptr : I->second.get();
+  }
 
-  ///\brief Returns raw information about objects in a source code.
+  /// Return information about global objects which are presented in AST and
+  /// raw information about objects in a source code.
   ///
   /// Note, that if there are several macro definitions with the same name
   /// (or includes of the same file), then only the first one will be remembered.
-  const RawInfo & getRawInfo() const noexcept { return mRawInfo; }
+  tsar::ClangGlobalInfo * getGlobalInfo(tsar::TransformationContextBase *TfmCtx) {
+    assert(TfmCtx && "Transfomration context must not be null!");
+    auto I{mGI.find(TfmCtx)};
+    return I == mGI.end() ? nullptr : I->second.get();
+  }
+
+  auto getGlobalInfo() {
+    return make_range(iterator{mGI.begin(), iterator_helper{}},
+                      iterator{mGI.end(), iterator_helper{}});
+  }
 
 private:
-  std::unique_ptr<tsar::GlobalInfoExtractor> mGIE;
-  RawInfo mRawInfo;
+  GlobalInfoMap mGI;
 };
 }
 #endif//TSAR_GLOBAL_INFO_EXTRACTOR_H

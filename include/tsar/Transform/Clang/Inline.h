@@ -331,7 +331,7 @@ public:
 
   explicit ClangInliner(clang::Rewriter &Rewriter, clang::ASTContext &Context,
       const GlobalInfoExtractor &GIE,
-      llvm::ClangGlobalInfoPass::RawInfo &RawInfo,
+      ClangGlobalInfo::RawInfo &RawInfo,
       const ASTImportInfo &ImportInfo) :
     mRewriter(Rewriter), mContext(Context),
     mSrcMgr(Context.getSourceManager()), mLangOpts(Context.getLangOpts()),
@@ -440,7 +440,7 @@ private:
   /// functions in this chain.
   ///
   /// We update list of raw identifiers if it is necessary to create a new one.
-  llvm::ClangGlobalInfoPass::RawInfo &mRawInfo;
+  tsar::ClangGlobalInfo::RawInfo &mRawInfo;
 
   /// This is a stack of scopes with a function definition at the bottom.
   /// Note, that pragma is also considered as a scope.

@@ -26,10 +26,12 @@
 #include "tsar/Analysis/Attributes.h"
 #include "tsar/Analysis/Clang/LoopMatcher.h"
 #include "tsar/Analysis/Clang/ExpressionMatcher.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include "tsar/Support/PassProvider.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Utils.h"
 #include <clang/AST/RecursiveASTVisitor.h>
 #include <clang/Basic/SourceManager.h>
@@ -118,6 +120,7 @@ public:
     if (isa<ForStmt>(S) || isa<WhileStmt>(S) || isa<DoStmt>(S)) {
       auto MatchItr = mLoops.find<AST>(S);
       if (MatchItr == mLoops.end()) {
+        dbgs() << "error at " << __LINE__ << "\n";
         toDiag(mSrcMgr.getDiagnostics(), S->getBeginLoc(),
           tsar::diag::warn_region_add_loop_unable);
       } else {
@@ -200,12 +203,6 @@ void ClangRegionCollector::getAnalysisUsage(AnalysisUsage &AU) const {
 bool ClangRegionCollector::runOnModule(llvm::Module &M) {
   releaseMemory();
   auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(M) : nullptr};
-  if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M.getContext().emitError("can not transform sources"
-      ": transformation context is not available");
-    return false;
-  }
   ClangRegionCollectorProvider::initialize<TransformationEnginePass>(
       [&TfmInfo, &M](TransformationEnginePass &Wrapper) {
         Wrapper.set(*TfmInfo);
@@ -239,12 +236,21 @@ bool ClangRegionCollector::runOnModule(llvm::Module &M) {
         LLVM_DEBUG(dbgs() << "[OPT REGION]: look up regions in "
                           << F->getName() << "\n");
         auto &Provider = getAnalysis<ClangRegionCollectorProvider>(*F);
-        if (auto *FD = TfmCtx->getDeclForMangledName(F->getName())) {
-          auto &LM = Provider.get<LoopMatcherPass>().getMatcher();
-          auto &EM = Provider.get<ClangExprMatcherPass>().getMatcher();
-          RegionDirectiveVisitor(TfmCtx->getRewriter(), LM, EM, mRegions)
-              .TraverseDecl(FD);
-        }
+        if (auto *DISub{findMetadata(F)})
+          if (auto *CU{DISub->getUnit()};
+              isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+            auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+            auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                                       TfmInfo->getContext(*CU))
+                                 : nullptr};
+            if (TfmCtx && TfmCtx->hasInstance())
+              if (auto *FD = TfmCtx->getDeclForMangledName(F->getName())) {
+                auto &LM = Provider.get<LoopMatcherPass>().getMatcher();
+                auto &EM = Provider.get<ClangExprMatcherPass>().getMatcher();
+                RegionDirectiveVisitor(TfmCtx->getRewriter(), LM, EM, mRegions)
+                    .TraverseDecl(FD);
+              }
+          }
         LLVM_DEBUG(dbgs() << "[OPT REGION]: total number of regions is "
                           << mRegions.size() << "\n");
         auto &LI = Provider.get<LoopInfoWrapperPass>().getLoopInfo();

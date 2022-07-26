@@ -63,6 +63,12 @@ public:
     return *mCtx;
   }
 
+  /// Return context.
+  const clang::ASTContext & getContext() const {
+    assert(hasInstance() && "Context is not configured!");
+    return *mCtx;
+  }
+
   /// Return compiler instance.
   const clang::CompilerInstance & getCompilerInstance() const {
     assert(hasInstance() && "Context is not configured!");
@@ -115,9 +121,6 @@ private:
   clang::CodeGenerator *mGen = nullptr;
   clang::ASTContext *mCtx = nullptr;
 };
-
-using TransformationContext [[deprecated("use ClangTransformationContext")]]
-    = ClangTransformationContext;
 }
 
 #endif//TSAR_CLANG_TRANSFORMATION_CONTEXT_H

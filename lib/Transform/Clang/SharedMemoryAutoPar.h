@@ -51,10 +51,10 @@ namespace tsar {
 class DFLoop;
 class AnalysisSocketInfo;
 class ClangDependenceAnalyzer;
-class ClangTransformationContext;
 class DIMemoryEnvironment;
 class ParallelItem;
 class OptimizationRegion;
+class TransformationContextBase;
 class TransformationInfo;
 struct GlobalOptions;
 struct MemoryMatchInfo;
@@ -115,7 +115,7 @@ public:
 
   void releaseMemory() override {
     mRegions.clear();
-    mTfmCtx = nullptr;
+    mTfmInfo = nullptr;
     mGlobalOpts = nullptr;
     mMemoryMatcher = nullptr;
     mGlobalsAA = nullptr;
@@ -139,41 +139,11 @@ protected:
   virtual void optimizeLevel(PointerUnion<Loop *, Function *> Level,
       const FunctionAnalysis &Provider) {}
 
-  /// Initialize interprocedural optimization.
-  ///
-  /// \return `false` if optimization has to be omitted.
-  virtual bool initializeIPO(llvm::Module &M,
-                             bcl::marray<bool, 2> &Reachability) {
-    return false;
-  }
-
-  /// Prepare level to upward optimization.
-  ///
-  /// Before the upward optimization levels in a function a traversed downward
-  /// to reach innermost levels. So, this function is called when a level
-  /// is visited for the first time.
-  ///
-  /// Return true if it is necessary to optimize this level and traverse
-  /// inner levels.
-  virtual bool optimizeGlobalIn(PointerUnion<Loop *, Function *> Level,
-      const FunctionAnalysis &Provider) {
-    return true;
-  }
-
-  /// Visit level in upward direction and perform optimization. Return `true`
-  /// if optimization was successful.
-  ///
-  /// If a level has not been optimized, the outer levels will not be also
-  /// optimized.
-  virtual bool optimizeGlobalOut(PointerUnion<Loop *, Function *> Level,
-      const FunctionAnalysis &Provider) {
-    return true;
-  }
+  /// Finalize parallelization.
+  virtual void finalize(llvm::Module &M, bcl::marray<bool, 2> &Reachability) {}
 
   /// Return analysis results computed on the client for a specified function.
   FunctionAnalysis analyzeFunction(llvm::Function &F);
-
-  llvm::Function *getEntryPoint() noexcept { return mEntryPoint; }
 
   const AdjacentListT &functions() const noexcept { return mAdjacentList; }
 
@@ -216,42 +186,28 @@ private :
 
   /// Check whether it is possible to parallelize a specified loop, analyze
   /// inner loops on failure.
-  bool findParallelLoops(Loop &L, const FunctionAnalysis &Provider,
-      tsar::ParallelItem *PI);
+    bool findParallelLoops(Loop &L, const FunctionAnalysis &Provider,
+                           tsar::TransformationContextBase &TfmCtx,
+                           tsar::ParallelItem *PI);
 
   /// Parallelize outermost parallel loops in the range.
   template <class ItrT>
-  bool findParallelLoops(PointerUnion<Loop *, Function *> Parent,
-      ItrT I, ItrT EI, const FunctionAnalysis &Provider,
-      tsar::ParallelItem *PI) {
+    bool findParallelLoops(PointerUnion<Loop *, Function *> Parent, ItrT I,
+                           ItrT EI, const FunctionAnalysis &Provider,
+                           tsar::TransformationContextBase &TfmCtx,
+                           tsar::ParallelItem *PI) {
     auto Parallelized = false;
     for (; I != EI; ++I)
-      Parallelized |= findParallelLoops(**I, Provider, PI);
+      Parallelized |= findParallelLoops(**I, Provider, TfmCtx, PI);
     if (Parallelized)
       optimizeLevel(Parent, Provider);
     return Parallelized;
   }
 
-  bool optimizeUpward(Loop &L, const FunctionAnalysis &Provider);
-
-  template<class ItrT>
-  bool optimizeUpward(PointerUnion<Loop *, Function *> Parent,
-      ItrT I, ItrT EI, const FunctionAnalysis &Provider) {
-    // We treat skipped levels as optimized ones.
-    if (!optimizeGlobalIn(Parent, Provider))
-      return true;
-    bool Optimize{true};
-    for (; I != EI; ++I)
-      Optimize &= optimizeUpward(**I, Provider);
-    if (Optimize)
-      Optimize = optimizeGlobalOut(Parent, Provider);
-    return Optimize;
-  }
 
   std::size_t buildAdjacentList();
 
-  tsar::ClangTransformationContext *mTfmCtx = nullptr;
-  tsar::TransformationInfo *mTfmInfo = nullptr;
+  tsar::TransformationInfo *mTfmInfo= nullptr;
   const tsar::GlobalOptions *mGlobalOpts = nullptr;
   tsar::MemoryMatchInfo *mMemoryMatcher = nullptr;
   GlobalsAAResult * mGlobalsAA = nullptr;
@@ -262,21 +218,21 @@ private :
   DenseSet<std::size_t> mExternalCalls;
   // Set of functions and their IDs which are called from parallel loops.
   DenseMap<Function *, std::size_t> mParallelCallees;
-  llvm::Function *mEntryPoint{nullptr};
 };
 
 /// This specifies additional passes which must be run on client.
-class ClangSMParallelizationInfo final : public tsar::PassGroupInfo {
+class ClangSMParallelizationInfo: public tsar::PassGroupInfo {
+public:
   void addBeforePass(legacy::PassManager &Passes) const override;
   void addAfterPass(legacy::PassManager &Passes) const override;
 };
 }
 
-#define INITIALIZE_SHARED_PARALLELIZATION(passName, arg, name)                 \
+#define INITIALIZE_SHARED_PARALLELIZATION(passName, arg, name, info)           \
   INITIALIZE_PASS_IN_GROUP_BEGIN(                                              \
       passName, arg, name, false, false,                                       \
       TransformationQueryManager::getPassRegistry())                           \
-  INITIALIZE_PASS_IN_GROUP_INFO(ClangSMParallelizationInfo)                    \
+  INITIALIZE_PASS_IN_GROUP_INFO(info)                                          \
   INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)                             \
   INITIALIZE_PASS_DEPENDENCY(PostDominatorTreeWrapperPass)                     \
   INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)                              \

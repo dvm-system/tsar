@@ -36,6 +36,10 @@
 #ifndef TSAR_EXPRESSION_MATCHER_H
 #define TSAR_EXPRESSION_MATCHER_H
 
+namespace tsar {
+class ClangTransformationContext;
+}
+
 namespace llvm {
 class Value;
 
@@ -63,6 +67,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
   void releaseMemory() override {
+    mTfmCtx = nullptr;
     mMatcher.clear();
     mUnmatchedAST.clear();
   }
@@ -76,6 +81,7 @@ public:
   const ExprASTSet & getUnmatchedAST() const noexcept { return mUnmatchedAST; }
 
 private:
+  tsar::ClangTransformationContext *mTfmCtx{nullptr};
   ExprMatcher mMatcher;
   ExprASTSet mUnmatchedAST;
 };

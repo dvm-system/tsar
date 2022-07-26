@@ -168,7 +168,7 @@ struct MemoryLocationRange {
       DimList == Other.DimList && Kind == Other.Kind;
   }
 
-  llvm::StringRef getKindAsString() const {
+  std::string getKindAsString() const {
     auto append = [](const std::string &What, std::string &To) {
       if (!To.empty())
         To += " | ";
@@ -191,16 +191,16 @@ struct MemoryLocationRange {
 ///
 /// \param [in] LHS The first location to intersect.
 /// \param [in] RHS The second location to intersect.
-/// \param [out] LC List of memory locations to store the difference 
+/// \param [out] LC List of memory locations to store the difference
 /// between locations LHS and Int. It will not be changed if the intersection
 /// is empty. If `LC == nullptr`, the difference will not be calculated and
 /// will not be stored anywhere.
-/// \param [out] RC List of memory locations to store the difference 
+/// \param [out] RC List of memory locations to store the difference
 /// between locations RHS and Int. It will not be changed if the intersection
 /// is empty. If `RC == nullptr`, the difference will not be calculated and
 /// will not be stored anywhere.
-/// \param [out] Threshold The maximum number of locations that can be 
-/// obtained as a result of calculating the differences. If it is exceeded, 
+/// \param [out] Threshold The maximum number of locations that can be
+/// obtained as a result of calculating the differences. If it is exceeded,
 /// exact differences will not be saved.
 /// \return The result of intersection. If it is None, intersection is empty.
 /// If it is a location, but `Ptr` of the returned location is `nullptr`, then

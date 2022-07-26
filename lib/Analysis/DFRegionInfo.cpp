@@ -173,7 +173,7 @@ bool DFRegionInfoPass::runOnFunction(Function &F) {
 }
 
 void DFRegionInfoPass::getAnalysisUsage(AnalysisUsage &AU) const {
-  AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequiredTransitive<LoopInfoWrapperPass>();
   AU.setPreservesAll();
 }
 

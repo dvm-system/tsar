@@ -277,8 +277,9 @@ TraitCache buildTraitCache(const trait::Info &Info, const trait::Loop &L) {
 
 const trait::Function *findFunction(const DISubprogram *DISub,
     const FunctionCache &Cache, const trait::Info &Info) {
+  SmallString<128> Path;
   sys::fs::UniqueID ID;
-  if (sys::fs::getUniqueID(DISub->getFilename(), ID))
+  if (sys::fs::getUniqueID(getAbsolutePath(*DISub, Path), ID))
     return nullptr;
   FunctionT F{ID, DISub->getLine(), DISub->getName()};
   auto FuncItr = Cache.find(F);
@@ -300,8 +301,9 @@ const trait::Loop * findLoop(const MDNode *LoopID, const LoopCache &Cache,
       break;
   if (!Loc)
     return nullptr;
+  SmallString<128> Path;
   sys::fs::UniqueID ID;
-  if (sys::fs::getUniqueID(Loc->getFilename(), ID))
+  if (sys::fs::getUniqueID(getAbsolutePath(*Loc->getScope(), Path), ID))
     return nullptr;
   auto LoopKey =
     LocationT{ ID, Loc->getLine(), Loc->getColumn() };
@@ -487,8 +489,10 @@ bool AnalysisReader::runOnFunction(Function &F) {
         continue;
       std::replace(LocToString.begin(), LocToString.end(), '*', '^');
       Var.get<Identifier>() = std::string(LocToString);
+      SmallString<128> Path;
       sys::fs::UniqueID FileID;
-      if (sys::fs::getUniqueID(DIVar->getFilename(), FileID)) {
+      if (sys::fs::getUniqueID(getAbsolutePath(*DIVar->getFile(), Path),
+                               FileID)) {
         LLVM_DEBUG(
             dbgs() << "[ANALYSIS READER]: can not find traits for variable "
                    << DIVar->getName() << " unable build unique ID for file"

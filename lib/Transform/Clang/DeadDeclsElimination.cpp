@@ -25,8 +25,10 @@
 #include "tsar/Transform/Clang/DeadDeclsElimination.h"
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Clang/NoMacroAssert.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
+#include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Clang/Diagnostic.h"
 #include <clang/AST/Decl.h>
 #include <clang/AST/RecursiveASTVisitor.h>
@@ -103,7 +105,7 @@ public:
     return true;
   }
 
-  bool TraverseBinaryOperator(BinaryOperator *BO) {
+  bool TraverseBinaryOperator(clang::BinaryOperator *BO) {
     if (!BO || !BO->isAssignmentOp())
       return RecursiveASTVisitor::TraverseBinaryOperator(BO);
     if (!BO->isCompoundAssignmentOp()) {
@@ -135,7 +137,7 @@ public:
   }
 
   /// Checks precondition and performs elimination of dead declarations.
-  void eliminateDeadDecls(const ClangGlobalInfoPass::RawInfo &RawInfo) {
+  void eliminateDeadDecls(const ClangGlobalInfo::RawInfo &RawInfo) {
     auto &Diags = mRewriter->getSourceMgr().getDiagnostics();
     DenseMap<Stmt *, SourceLocation> ScopeWithMacro;
     for (auto I = mDeadDecls.begin(), EI = mDeadDecls.end(); I != EI;) {
@@ -243,9 +245,10 @@ private:
   /// Return true if there is a side effect inside a specified statement.
   const Stmt * findSideEffect(const Stmt &S) {
     if (!isa<CallExpr>(S) &&
-        !(isa<BinaryOperator>(S) && cast<BinaryOperator>(S).isAssignmentOp()) &&
-        !(isa<UnaryOperator>(S) &&
-          cast<UnaryOperator>(S).isIncrementDecrementOp())) {
+        !(isa<clang::BinaryOperator>(S) &&
+          cast<clang::BinaryOperator>(S).isAssignmentOp()) &&
+        !(isa<clang::UnaryOperator>(S) &&
+          cast<clang::UnaryOperator>(S).isIncrementDecrementOp())) {
       for (auto Child : make_range(S.child_begin(), S.child_end()))
         if (Child)
           if (auto SideEffect = findSideEffect(*Child))
@@ -265,12 +268,19 @@ private:
 }
 
 bool ClangDeadDeclsElimination::runOnFunction(Function &F) {
-  auto *M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  auto *TfmCtx{TfmInfo ? TfmInfo->getContext(*M) : nullptr};
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
+    return false;
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance()) {
-    M->getContext().emitError("can not transform sources"
-      ": transformation context is not available");
+    F.getContext().emitError("cannot transform sources"
+                              ": transformation context is not available");
     return false;
   }
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
@@ -282,7 +292,9 @@ bool ClangDeadDeclsElimination::runOnFunction(Function &F) {
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of all dead declarations ";
     Visitor.printRemovedDecls());
-  Visitor.eliminateDeadDecls(GIP.getRawInfo());
+  auto GI{GIP.getGlobalInfo(TfmCtx)};
+  assert(GI && "Raw info must be available!");
+  Visitor.eliminateDeadDecls(GI->RI);
   LLVM_DEBUG(
     dbgs() << "[DEAD DECLS ELIMINATION]: list of removed declarations ";
     Visitor.printRemovedDecls());

@@ -93,7 +93,8 @@ public:
   static char ID;
 
   /// Default constructor.
-  DIDependencyAnalysisPass() : FunctionPass(ID) {
+  explicit DIDependencyAnalysisPass(bool IsInitialization = false)
+      : FunctionPass(ID), mIsInitialization(IsInitialization) {
     initializeDIDependencyAnalysisPassPass(*PassRegistry::getPassRegistry());
   }
 
@@ -159,6 +160,7 @@ private:
     tsar::DependenceSet &DepSet, tsar::DIDependenceSet &DIDepSet,
     tsar::DIMemoryTraitRegionPool &Pool);
 
+  bool mIsInitialization;
   tsar::DIDependencInfo mDeps;
   tsar::AliasTree *mAT;
   tsar::DIMemoryTraitPool *mTraitPool;

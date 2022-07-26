@@ -1660,7 +1660,13 @@ void DIDependencyAnalysisPass::propagateReduction(PHINode *Phi,
                                  &RedKind](Loop *InnerL) {
     if (!InnerL->getLoopID())
       return false;
-    auto &InnerPool = *(*mTraitPool)[InnerL->getLoopID()];
+    auto InnerPoolItr = mTraitPool->find(InnerL->getLoopID());
+    // Pool of traits is empty if the inner loop is located in a function
+    // which is called in the outer loop. After internal inlining these
+    // loop are in the same function.
+    if (InnerPoolItr == mTraitPool->end())
+      return false;
+    auto &InnerPool = *InnerPoolItr->get<tsar::Pool>();
     for (auto &DIMTraitItr : Traits) {
       auto InnerTraitItr = InnerPool.find_as(DIMTraitItr->getMemory());
       if (InnerTraitItr == InnerPool.end())
@@ -2008,16 +2014,23 @@ bool DIDependencyAnalysisPass::runOnFunction(Function &F) {
       if (DebugLoc DbgLoc = L->getStartLoc()) {
         dbgs() << "[DA DI]: loop at ";  DbgLoc.print(dbgs()); dbgs() << "\n";
       });
-    auto &Pool = (*mTraitPool)[DILoop];
-    LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Pool));
-    SmallVector<const DIMemory *, 4> LockedTraits;
-    if (!Pool) {
-      Pool = std::make_unique<DIMemoryTraitRegionPool>();
+    DIMemoryTraitRegionPool *Pool{nullptr};
+    if (mIsInitialization) {
+      auto &PoolRef{(*mTraitPool)[DILoop]};
+      LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, PoolRef));
+      if (!PoolRef)
+        PoolRef = std::make_unique<DIMemoryTraitRegionPool>();
+      Pool = PoolRef.get();
+    } else if (auto Itr{mTraitPool->find(DILoop)}; Itr != mTraitPool->end()) {
+      LLVM_DEBUG(if (DWLang) allocatePoolLog(*DWLang, Itr->get<tsar::Pool>()));
+      Pool = Itr->get<tsar::Pool>().get();
     } else {
-      for (auto &T : *Pool)
-        if (T.is<trait::Lock>())
-          LockedTraits.push_back(T.getMemory());
+      continue;
     }
+    SmallVector<const DIMemory *, 4> LockedTraits;
+    for (auto &T : *Pool)
+      if (T.is<trait::Lock>())
+        LockedTraits.push_back(T.getMemory());
     assert(PI.count(DFL) && "IR-level traits must be available for a loop!");
     auto &DepSet = PI.find(DFL)->get<DependenceSet>();
     auto &DIDepSet = mDeps.try_emplace(DILoop, DepSet.size()).first->second;
@@ -2340,8 +2353,8 @@ void DIDependencyAnalysisPass::getAnalysisUsage(AnalysisUsage &AU)  const {
   AU.setPreservesAll();
 }
 
-FunctionPass * llvm::createDIDependencyAnalysisPass() {
-  return new DIDependencyAnalysisPass();
+FunctionPass * llvm::createDIDependencyAnalysisPass(bool IsInitialization) {
+  return new DIDependencyAnalysisPass(IsInitialization);
 }
 
 void DIMemoryTraitHandle::deleted() {

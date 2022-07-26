@@ -207,6 +207,26 @@ public:
     assert(For && "Marker must be attached to an item!");
     parent_insert(For);
   }
+
+  /// Return a parallel item related to this marker.
+  ItemT *getBase() {
+    auto I{llvm::find_if(parents(), [](const auto *Parent) {
+      return llvm::isa<ItemT>(Parent);
+    })};
+    assert(I != parent_end() &&
+           "A base directive for the marker must be known!");
+    return llvm::cast<ItemT>(*I);
+  }
+
+  /// Return a parallel item related to this marker.
+  const ItemT *getBase() const {
+    auto I{llvm::find_if(parents(), [](const auto *Parent) {
+      return llvm::isa<ItemT>(Parent);
+    })};
+    assert(I != parent_end() &&
+           "A base directive for the marker must be known!");
+    return llvm::cast<ItemT>(*I);
+  }
 };
 
 inline ParallelItem::~ParallelItem() {

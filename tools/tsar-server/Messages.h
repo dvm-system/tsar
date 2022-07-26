@@ -35,6 +35,7 @@
 #include <bcl/Json.h>
 #include <llvm/ADT/StringSwitch.h>
 #include <llvm/ADT/Optional.h>
+#include <llvm/Support/FileSystem.h>
 #include <array>
 #include <limits>
 #include <vector>
@@ -125,11 +126,11 @@ JSON_OBJECT_END(Diagnostic)
 /// This represents a source file.
 JSON_OBJECT_BEGIN(File)
 JSON_OBJECT_PAIR_2(File
-  , ID, unsigned
+  , ID, llvm::sys::fs::UniqueID;
   , Name, std::string
   )
 
-  File() : JSON_INIT(File, std::numeric_limits<unsigned>::max(), "") {}
+  File() : JSON_INIT(File, llvm::sys::fs::UniqueID{}, "") {}
   ~File() = default;
 
   File(const File &) = default;
@@ -141,14 +142,16 @@ JSON_OBJECT_END(File)
 /// This represents location in a source code.
 JSON_OBJECT_BEGIN(Location)
 JSON_OBJECT_PAIR_6(Location,
-  File, unsigned,
+  File, llvm::sys::fs::UniqueID,
   Line, unsigned,
   Column, unsigned,
-  MacroFile, unsigned,
+  MacroFile, llvm::sys::fs::UniqueID,
   MacroLine, unsigned,
   MacroColumn, unsigned)
 
-  Location() : JSON_INIT(Location, 0, 0, 0, 0, 0, 0) {}
+  Location()
+    : JSON_INIT(Location, llvm::sys::fs::UniqueID{}, 0, 0,
+                llvm::sys::fs::UniqueID{}, 0, 0) {}
   ~Location() = default;
 
   Location(const Location &) = default;
@@ -250,6 +253,49 @@ template<class T> struct Traits<llvm::Optional<T>> {
       Traits<T>::unparse(JSON, *Obj);
     else
       JSON += R"(null)";
+  }
+};
+
+template <> struct Traits<llvm::sys::fs::UniqueID> {
+  inline static bool parse(llvm::sys::fs::UniqueID &Dest, Lexer &Lex) {
+    auto &&[Count, MaxIdx, Ok] = Parser<>::numberOfKeys(Lex);
+    if (!Ok || Count != 2 || Count != MaxIdx + 1)
+      return false;
+    return Parser<>::traverse<Traits<llvm::sys::fs::UniqueID>>(Dest, Lex);
+  }
+
+  inline static bool parse(llvm::sys::fs::UniqueID &Dest, Lexer &Lex,
+                           std::pair<Position, Position> Key) {
+    Position Idx{Key.second};
+    if (Key.first != 0)
+      Idx = std::stoull(
+          Lex.json().substr(Key.first + 1, Key.second - Key.first - 1));
+    auto Device{Dest.getDevice()};
+    auto File{Dest.getFile()};
+    switch (Idx) {
+    default:
+      return false;
+    case 0:
+      if (!Traits<decltype(Device)>::parse(Device, Lex))
+        return false;
+      break;
+    case 1:
+      if (!Traits<decltype(File)>::parse(File, Lex))
+        return false;
+      break;
+    }
+    Dest = llvm::sys::fs::UniqueID(Device, File);
+    return true;
+  }
+
+  inline static void unparse(String &JSON, llvm::sys::fs::UniqueID Obj) {
+    JSON += '[';
+    auto Device{Obj.getDevice()};
+    auto File{Obj.getFile()};
+    Traits<decltype(Device)>::unparse(JSON, Device);
+    JSON += ',';
+    Traits<decltype(File)>::unparse(JSON, File);
+    JSON += ']';
   }
 };
 }

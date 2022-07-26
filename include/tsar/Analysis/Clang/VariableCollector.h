@@ -162,7 +162,8 @@ struct VariableCollector
   bool localize(DIMemoryTrait &T, const DIAliasNode &DIN,
                 const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, SortedVarMultiListT *Error = nullptr);
+                SortedVarListT &VarNames, SortedVarListT &LocalVarNames,
+                SortedVarMultiListT *Error = nullptr);
 
   /// Check whether it is possible to use high-level syntax to create copy for
   /// all memory locations in `TS` for each thread.
@@ -171,7 +172,8 @@ struct VariableCollector
   /// prevents localization inside the list.
   bool localize(DIAliasTrait &TS, const DIMemoryMatcher &ASTToClient,
                 const ClonedDIMemoryMatcher &ClientToServer,
-                SortedVarListT &VarNames, SortedVarMultiListT *Error = nullptr);
+                SortedVarListT &VarNames, SortedVarListT &LocalVarNames,
+                SortedVarMultiListT *Error = nullptr);
 
   /// Map of variable which is referenced in a scope. The value in the map is
   /// metadat-level memory locations which represent a derived memory from

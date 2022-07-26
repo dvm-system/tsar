@@ -43,6 +43,7 @@
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
 #include "tsar/Analysis/Memory/PassAAProvider.h"
 #include "tsar/Analysis/Memory/Passes.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
 #include "tsar/Core/Query.h"
@@ -100,32 +101,28 @@ void ClangSMParallelizationInfo::addAfterPass(
   Passes.add(createAnalysisCloseConnectionPass());
 }
 
-bool ClangSMParallelization::optimizeUpward(Loop &L,
-                                            const FunctionAnalysis &Provider) {
-  return optimizeUpward(&L, L.begin(), L.end(), Provider);
-}
-
-bool ClangSMParallelization::findParallelLoops(Loop &L,
-    const FunctionAnalysis &Provider, ParallelItem *PI) {
+bool ClangSMParallelization::findParallelLoops(
+    Loop &L, const FunctionAnalysis &Provider,
+    TransformationContextBase &TfmCtx, ParallelItem *PI) {
   auto &F = *L.getHeader()->getParent();
   if (!mRegions.empty() &&
     std::none_of(mRegions.begin(), mRegions.end(),
       [&L](const OptimizationRegion *R) { return R->contain(L); })) {
     assert(!PI && "Loop located inside a parallel item must be contained in an "
                   "optimization region!");
-    return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+    return findParallelLoops(&L, L.begin(), L.end(), Provider, TfmCtx, PI);
   }
   auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();
   auto &CL = Provider.value<CanonicalLoopPass *>()->getCanonicalLoopInfo();
   auto &RI = Provider.value<DFRegionInfoPass *>()->getRegionInfo();
   auto &LM = Provider.value<LoopMatcherPass *>()->getMatcher();
-  auto &SrcMgr = mTfmCtx->getRewriter().getSourceMgr();
+  auto &SrcMgr = cast<ClangTransformationContext>(TfmCtx).getRewriter().getSourceMgr();
   auto &Diags = SrcMgr.getDiagnostics();
   if (!PL.count(&L)) {
     if (PI)
       PI->finalize();
     if (!PI || PI && PI->isChildPossible())
-      return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+      return findParallelLoops(&L, L.begin(), L.end(), Provider, TfmCtx, PI);
     return false;
   }
   auto LMatchItr = LM.find<IR>(&L);
@@ -140,7 +137,7 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
     if (PI)
       PI->finalize();
     if (!PI || PI && PI->isChildPossible())
-      return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+      return findParallelLoops(&L, L.begin(), L.end(), Provider, TfmCtx, PI);
     return false;
   }
   auto &Socket = mSocketInfo->getActive()->second;
@@ -170,7 +167,7 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
     if (PI)
       PI->finalize();
     if (!PI || PI && PI->isChildPossible())
-      return findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+      return findParallelLoops(&L, L.begin(), L.end(), Provider, TfmCtx, PI);
     return false;
   }
   bool InParallelItem = PI;
@@ -194,7 +191,8 @@ bool ClangSMParallelization::findParallelLoops(Loop &L,
   }
   bool Parallelized{PI != nullptr};
   if (!PI || !PI->isFinal())
-    Parallelized |= findParallelLoops(&L, L.begin(), L.end(), Provider, PI);
+    Parallelized |=
+        findParallelLoops(&L, L.begin(), L.end(), Provider, TfmCtx, PI);
   return Parallelized;
 }
 
@@ -326,14 +324,9 @@ static void addToReachability(const AdjacentListT &AdjacentList,
 
 bool ClangSMParallelization::runOnModule(Module &M) {
   releaseMemory();
-  if (!(mEntryPoint = M.getFunction("main")))
-    mEntryPoint = M.getFunction("MAIN_");
-  // TODO (kaniandr@gmail.com): emit warning if entry point has not be found
-  // TODO (kaniandr@gmail.com): add option to manually specify entry point
   auto &TfmInfoPass{ getAnalysis<TransformationEnginePass>() };
   mTfmInfo = TfmInfoPass ? &TfmInfoPass.get() : nullptr;
-  mTfmCtx = mTfmInfo ? mTfmInfo->getContext(M) : nullptr;
-  if (!mTfmCtx || !mTfmCtx->hasInstance()) {
+  if (!mTfmInfo) {
     M.getContext().emitError("can not transform sources"
                              ": transformation context is not available");
     return false;
@@ -349,11 +342,30 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     transform(RegionInfo, std::back_inserter(mRegions),
               [](const OptimizationRegion &R) { return &R; });
   } else {
+    auto *CUs{M.getNamedMetadata("llvm.dbg.cu")};
+    auto CXXCUItr{find_if(CUs->operands(), [](auto *MD) {
+      auto *CU{dyn_cast<DICompileUnit>(MD)};
+      return CU &&
+             (isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage()));
+    })};
+    if (CXXCUItr == CUs->op_end()) {
+      M.getContext().emitError(
+          "cannot transform sources"
+          ": transformation of C/C++ sources are only possible now");
+      return false;
+    }
+    auto *TfmCtx{dyn_cast_or_null<ClangTransformationContext>(
+        mTfmInfo->getContext(cast<DICompileUnit>(**CXXCUItr)))};
+    if (!TfmCtx || !TfmCtx->hasInstance()) {
+      M.getContext().emitError("cannot transform sources"
+                               ": transformation context is not available");
+      return false;
+    }
     for (auto &Name : mGlobalOpts->OptRegions)
       if (auto *R = RegionInfo.get(Name))
         mRegions.push_back(R);
       else
-        toDiag(mTfmCtx->getContext().getDiagnostics(),
+        toDiag(TfmCtx->getContext().getDiagnostics(),
                tsar::diag::warn_region_not_found) << Name;
   }
   auto NumberOfSCCs = buildAdjacentList();
@@ -404,22 +416,28 @@ bool ClangSMParallelization::runOnModule(Module &M) {
     }
     LLVM_DEBUG(dbgs() << "[SHARED PARALLEL]: process function " << F->getName()
                       << "\n");
-    auto Provider = analyzeFunction(*F);
-    auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
-    findParallelLoops(F, LI.begin(), LI.end(), Provider, nullptr);
-  }
-  if (!initializeIPO(M, Reachability))
+    if (auto *DISub{findMetadata(F)})
+      if (auto *CU{DISub->getUnit()};
+          isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+        auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+        auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                                   TfmInfo->getContext(*CU))
+                             : nullptr};
+        if (TfmCtx && TfmCtx->hasInstance()) {
+          auto Provider = analyzeFunction(*F);
+          auto &LI = Provider.value<LoopInfoWrapperPass *>()->getLoopInfo();
+          findParallelLoops(F, LI.begin(), LI.end(), Provider, *TfmCtx,
+                            nullptr);
+          continue;
+        }
+      }
+    F->getContext().emitError(
+        "cannot transform sources"
+        ": transformation context is not available for the '" +
+        F->getName() + "' function");
     return false;
-  for (auto &&[F, Node] : mAdjacentList) {
-    if (!F || F->isIntrinsic() || F->isDeclaration() ||
-        hasFnAttr(*F, AttrKind::LibFunc))
-      continue;
-    if (isParallelCallee(*F, Node.get<Id>(), Reachability))
-      continue;
-    auto Provider{analyzeFunction(*F)};
-    auto &LI{Provider.value<LoopInfoWrapperPass *>()->getLoopInfo()};
-    optimizeUpward(F, LI.begin(), LI.end(), Provider);
   }
+  finalize(M, Reachability);
   return false;
 }
 

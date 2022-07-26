@@ -44,6 +44,8 @@ struct GlobalOptions {
 
   /// Print only names of files instead of full paths.
   bool PrintFilenameOnly = false;
+  /// Print versions of all available tools.
+  bool PrintToolVersion = false;
   /// Disallow unsafe integer type cast in analysis passes.
   bool IsSafeTypeCast = true;
   /// Assume that subscript expression is in bounds value of an array dimension.

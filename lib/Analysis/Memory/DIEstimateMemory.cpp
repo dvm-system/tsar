@@ -550,7 +550,7 @@ void DIMemoryHandleBase::addToExistingUseListAfter(DIMemoryHandleBase *Node) {
 }
 
 DIAliasTree::DIAliasTree(llvm::Function &F) :
-    mTopLevelNode(new DIAliasTopNode), mFunc(&F) {
+    mTopLevelNode(new DIAliasTopNode(this)), mFunc(&F) {
   ++NumAliasNode;
   mNodes.push_back(mTopLevelNode);
 }
@@ -568,7 +568,7 @@ DIAliasTree::addNewNode(
   assert(!Itr->getAliasNode() &&
     "Memory location is already attached to a node!");
   ++NumAliasNode, ++NumEstimateNode;
-  auto *N = new DIAliasEstimateNode;
+  auto *N = new DIAliasEstimateNode(this);
   mNodes.push_back(N);
   N->setParent(Parent);
   Itr->setAliasNode(*N);
@@ -589,7 +589,7 @@ DIAliasTree::addNewUnknownNode(
   assert(!Itr->getAliasNode() &&
     "Memory location is already attached to a node!");
   ++NumAliasNode, ++NumUnknownNode;
-  auto *N = new DIAliasUnknownNode;
+  auto *N = new DIAliasUnknownNode(this);
   mNodes.push_back(N);
   N->setParent(Parent);
   Itr->setAliasNode(*N);

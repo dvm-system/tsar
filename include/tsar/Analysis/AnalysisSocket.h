@@ -28,10 +28,10 @@
 #define TSAR_ANALYSIS_SOCKET_H
 
 #include "tsar/Support/AnalysisWrapperPass.h"
+#include "tsar/Support/SMStringSocket.h"
 #include <bcl/cell.h>
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/Json.h>
-#include <bcl/Socket.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringExtras.h>
 #include <llvm/ADT/StringRef.h>
@@ -55,7 +55,7 @@ JSON_OBJECT_END(AnalysisResponse)
 
 /// This class allows to establish connection to analysis server and to obtain
 /// analysis results and perform synchronization between a client and a server.
-class AnalysisSocket final : public bcl::Socket<std::string> {
+class AnalysisSocket final : public SMStringSocketBase<AnalysisSocket> {
   /// Add requested analysis to the end of request.
   struct PushBackAnalysisID {
     template <class AnalysisType> void operator()() {
@@ -78,82 +78,18 @@ class AnalysisSocket final : public bcl::Socket<std::string> {
   };
 
 public:
-  enum MessageKind : char {
-    Delimiter = '$',
-    Wait = 'w',
-    Release = 'r',
-    Notify = 'n',
-    Analysis = 'a',
-    Invalid = 'i',
-  };
-
-  friend inline bool operator==(const MessageTy &R, MessageKind K) {
-    return R.size() == 1 && R.front() == K;
-  }
-  friend inline bool operator==(MessageKind K, const MessageTy &R) {
-    return operator==(R, K);
-  }
-  friend inline bool operator!=(const MessageTy &R, MessageKind K) {
-    return !operator==(R, K);
-  }
-  friend inline bool operator!=(MessageKind K, const MessageTy &R) {
-    return !operator==(R, K);
-  }
-
-  friend inline std::string operator+(const MessageTy &R, MessageKind K) {
-    return R + std::string({ K });
-  }
-  friend inline std::string operator+(MessageKind K, const MessageTy &R) {
-    return std::string({ K }) + R;
-  }
-
-  ~AnalysisSocket() noexcept {
-    // Avoid exception in destructor.
-    try {
-      close();
-    } catch (...) {
-      llvm::report_fatal_error("unable to close connection with server");
-    }
-  }
-
-  /// Close connection.
-  void close() {
-    for (auto &Callback : mClosedCallbacks)
-      Callback(false);
-    mClosedCallbacks.clear();
-    mReceiveCallbacks.clear();
-  }
-
-  /// Send response from a server to client.
+  /// Unparse response to a list of analysis passes.
   ///
   /// Response is a string representation of an address which points to an
   /// analysis pass. A `nullptr` could be encoded with empty string.
-  ///
-  /// Note, that physically this method runs in the client to set response
-  /// representation.
-  void send(const std::string &Response) const override {
-    assert(Response.back() == Delimiter && "Last character must be a delimiter!");
-    mResponseKind = static_cast<MessageKind>(Response.front());
-    if (mResponseKind == Analysis) {
-      llvm::StringRef Json(Response.data() + 1, Response.size() - 2);
-      json::Parser<AnalysisResponse> Parser(Json.str());
-      AnalysisResponse R;
-      if (!Parser.parse(R))
-        mAnalysis.clear();
-      else
-        mAnalysis = std::move(R[AnalysisResponse::Analysis]);
-    }
-  }
-
-  /// Register a callback which is invoked whenever a server receive data.
-  void receive(const ReceiveCallback &F) const override {
-    mReceiveCallbacks.push_back(F);
-  }
-
-  /// Register a callback which is invoked on a server if corresponding
-  /// connection is closed.
-  void closed(const ClosedCallback &F) const override {
-    mClosedCallbacks.push_back(F);
+  void processResponse(const std::string &Response) const {
+    llvm::StringRef Json(Response.data() + 1, Response.size() - 2);
+    json::Parser<AnalysisResponse> Parser(Json.str());
+    AnalysisResponse R;
+    if (!Parser.parse(R))
+      mAnalysis.clear();
+    else
+      mAnalysis = std::move(R[AnalysisResponse::Analysis]);
   }
 
   /// Retrieve a specified analysis results from a server.
@@ -172,7 +108,7 @@ public:
       Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
-    assert(mResponseKind == Analysis && "Unknown response: wait for analysis!");
+    assert(mResponseKind == Data && "Unknown response: wait for data!");
     if (mAnalysis.size() == sizeof...(AnalysisType)) {
       ResultT Result;
       std::size_t Idx = 0;
@@ -199,7 +135,7 @@ public:
       Callback(Request);
     // Note, that callback run send() in client, so mAnalysisPass is already
     // set here.
-    assert(mResponseKind == Analysis && "Unknown response: wait for analysis!");
+    assert(mResponseKind == Data && "Unknown response: wait for data!");
     if (mAnalysis.size() == sizeof...(AnalysisType)) {
       ResultT Result;
       std::size_t Idx = 0;
@@ -210,30 +146,7 @@ public:
     return llvm::None;
   }
 
-  /// Wait notification from a server.
-  void wait() {
-    do {
-      for (auto &Callback : mReceiveCallbacks)
-        Callback({ Wait });
-        // Note, that callback run send() in client, so mAnalysisPass is already
-        // set here.
-    } while (mResponseKind != Notify);
-  }
-
-  /// Notify server that all requests have been processed and it may execute
-  /// further passes.
-  void release() {
-    do {
-      for (auto &Callback : mReceiveCallbacks)
-        Callback({ Release });
-        // Note, that callback run send() in client, so mAnalysisPass is already
-        // set here.
-    } while (mResponseKind != Notify);
-  }
 private:
-  mutable llvm::SmallVector<ReceiveCallback, 1> mReceiveCallbacks;
-  mutable llvm::SmallVector<ClosedCallback, 1> mClosedCallbacks;
-  mutable MessageKind mResponseKind;
   mutable std::vector<void *> mAnalysis;
 };
 

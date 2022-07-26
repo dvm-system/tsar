@@ -32,3 +32,4 @@ def AlwaysReturn : Attribute<"sapfor.alwaysreturn">;
 def LibFunc : Attribute<"sapfor.libfunc">;
 def DirectUserCallee : Attribute<"sapfor.direct-user-callee">;
 def Inline : Attribute<"sapfor.inline">;
+def IndirectCall : Attribute<"sapfor.indirect-call">;

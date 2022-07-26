@@ -33,6 +33,7 @@
 #include "tsar/Analysis/Memory/DIEstimateMemory.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
@@ -438,7 +439,7 @@ private:
     auto MemMatch = mMemoryMatcher->find<AST>(Var);
     if (MemMatch == mMemoryMatcher->end())
       return;
-    auto AI = MemMatch->get<IR>();
+    auto AI = MemMatch->get<IR>().front();
     if (!AI || !AI->getType() || !AI->getType()->isPointerTy())
       return;
     LInfo->setInduction(AI);
@@ -567,6 +568,20 @@ private:
         Expr->print(dbgs()); dbgs() << "\n";
       });
     LInfo->markAsCanonical();
+    if (auto *Parent{L->getParentLoop()}) {
+      auto *ParentDIDepSet = mDIMInfo->findFromClient(*Parent);
+      if (!ParentDIDepSet) {
+        LLVM_DEBUG(dbgs() << "[CANONICAL LOOP]: parent loop is not analyzed\n");
+        return;
+      }
+      if (std::get<0>(
+              isLoopInvariantMemory(STR, *ParentDIDepSet, *DIMI, *Init)) &&
+          std::get<0>(
+              isLoopInvariantMemory(STR, *ParentDIDepSet, *DIMI, *Increment)) &&
+          std::get<0>(
+              isLoopInvariantMemory(STR, *ParentDIDepSet, *DIMI, *Condition)))
+        LInfo->markAsRectangular();
+    }
   }
 
   CanonicalLoopSet *mCanonicalLoopInfo = nullptr;
@@ -689,11 +704,16 @@ DeclarationMatcher makeLoopMatcher() {
 
 bool CanonicalLoopPass::runOnFunction(Function &F) {
   releaseMemory();
-  auto M = F.getParent();
-  auto &TfmInfo = getAnalysis<TransformationEnginePass>();
-  if (!TfmInfo)
+  auto *DISub{findMetadata(&F)};
+  if (!DISub)
     return false;
-  auto TfmCtx = TfmInfo->getContext(*M);
+  auto *CU{DISub->getUnit()};
+  if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
+    return false;
+  auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
+  auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
+                             TfmInfo->getContext(*CU))
+                       : nullptr};
   if (!TfmCtx || !TfmCtx->hasInstance())
     return false;
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
@@ -730,7 +750,10 @@ void CanonicalLoopPass::print(raw_ostream &OS, const llvm::Module *M) const {
     tsar::print(OS, DFL->getLoop()->getStartLoc(),
                 GlobalOpts.PrintFilenameOnly);
     OS << " is " << (Info->isCanonical() ? "semantically" : "syntactically")
-       << " canonical\n";
+       << " canonical";
+    if (Info->isRectangular())
+      OS << "and rectangular";
+    OS << "\n";
   }
 }
 
@@ -739,7 +762,7 @@ void CanonicalLoopPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DIEstimateMemoryPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequired<TransformationEnginePass>();
-  AU.addRequired<DFRegionInfoPass>();
+  AU.addRequiredTransitive<DFRegionInfoPass>();
   AU.addRequired<LoopMatcherPass>();
   AU.addRequired<MemoryMatcherImmutableWrapper>();
   AU.addRequired<EstimateMemoryPass>();
