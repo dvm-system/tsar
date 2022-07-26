@@ -168,6 +168,10 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> LoadSources;
   llvm::cl::opt<bool> NoLoadSources;
   llvm::cl::opt<std::string> AnalysisUse;
+  llvm::cl::opt<std::string> ProfileUse;
+  llvm::cl::list<std::string> ObjectFilenames;
+  llvm::cl::opt<unsigned> UnknownFunctionWeight;
+  llvm::cl::opt<unsigned> UnknownBuiltinWeight;
   llvm::cl::list<std::string> OptRegion;
 
   llvm::cl::OptionCategory TransformCategory;
@@ -311,6 +315,18 @@ Options::Options() :
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),
     cl::desc("Use external analysis results to clarify analysis")),
+  ProfileUse("fprofile-use", cl::cat(AnalysisCategory),
+    cl::value_desc("filename"),
+    cl::desc("Use profile to clarify analysis")),
+  ObjectFilenames("fobject-files", cl::cat(AnalysisCategory), cl::value_desc("filenames"),
+    cl::ZeroOrMore, cl::ValueRequired, cl::CommaSeparated,
+    cl::desc("List of object files used to build profile")),
+  UnknownFunctionWeight("unknown-function-weight", cl::init(1000000),
+    cl::Hidden, cl::cat(AnalysisCategory),
+    cl::desc("Assumed weight of a function if a profile is not available")),
+  UnknownBuiltinWeight("unknown-builtin-weight", cl::init(20),
+    cl::Hidden, cl::cat(AnalysisCategory),
+    cl::desc("Assumed weight of a builtin function if a profile is not available")),
   OptRegion("foptimize-only", cl::cat(AnalysisCategory), cl::value_desc("regions"),
     cl::ZeroOrMore, cl::ValueRequired, cl::CommaSeparated,
     cl::desc("Allow optimization of specified regions (comma separated list of region names")),
@@ -606,8 +622,12 @@ void Tool::storeCLOptions() {
   }
   mGlobalOpts.MemoryAccessInlineThreshold =
       Options::get().MemoryAccessInlineThreshold;
+  mGlobalOpts.UnknownFunctionWeight = Options::get().UnknownFunctionWeight;
+  mGlobalOpts.UnknownFunctionWeight = Options::get().UnknownBuiltinWeight;
   mGlobalOpts.OptRegions = Options::get().OptRegion;
   mGlobalOpts.AnalysisUse = Options::get().AnalysisUse;
+  mGlobalOpts.ProfileUse = Options::get().ProfileUse;
+  mGlobalOpts.ObjectFilenames = Options::get().ObjectFilenames;
   mEmitAST = addLLIfSet(addIfSet(Options::get().EmitAST));
   mMergeAST = mEmitAST ?
     addLLIfSet(addIfSet(Options::get().MergeAST)) :

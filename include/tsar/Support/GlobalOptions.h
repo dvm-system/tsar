@@ -73,8 +73,16 @@ struct GlobalOptions {
   /// A function is only inlined if the number of memory accesses in the caller
   /// does not exceed this value.
   unsigned MemoryAccessInlineThreshold = 0;
-  /// Pass to external analysis results which is used to clarify analysis/
+  /// Pass to external analysis results which is used to clarify analysis.
   std::string AnalysisUse = "";
+  /// Pass to profile which is used to measure possible optimization gain.
+  std::string ProfileUse = "";
+  /// List of object file names.
+  std::vector<std::string> ObjectFilenames;
+  /// Assumed weight of a function if a profile is not available.
+  unsigned UnknownFunctionWeight = 1000000;
+  /// Assumed weight of a builtin function if a profile is not available.
+  unsigned UnknownBuiltinWeight = 20;
   /// List of regions which should be optimized.
   std::vector<std::string> OptRegions;
   /// This suffix should be add to transformed sources before extension.

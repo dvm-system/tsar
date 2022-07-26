@@ -33,6 +33,7 @@
 namespace llvm {
 class PassRegistry;
 class FunctionPass;
+class ModulePass;
 
 /// Initialize all passes which is necessary to load external analysis results.
 void initializeAnalysisReader(PassRegistry &Registry);
@@ -44,5 +45,11 @@ FunctionPass * createAnalysisReader(llvm::StringRef Filename = "");
 
 /// Initialize a reader of external analysis results.
 void initializeAnalysisReaderPass(PassRegistry &Registry);
+
+/// Initialize a pass to estimate region weights in a source code.
+void initializeRegionWeightsEstimatorPass(PassRegistry &Registry);
+
+/// Create a pass to estimate region weights in a source code.
+ModulePass *createRegionWeightsEstimator();
 }
 #endif//TSAR_ANALYSIS_READER_PASSES_H

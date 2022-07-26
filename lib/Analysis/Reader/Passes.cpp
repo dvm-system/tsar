@@ -29,4 +29,5 @@ using namespace llvm;
 
 void llvm::initializeAnalysisReader(PassRegistry &Registry) {
   initializeAnalysisReaderPass(Registry);
+  initializeRegionWeightsEstimatorPass(Registry);
 }
