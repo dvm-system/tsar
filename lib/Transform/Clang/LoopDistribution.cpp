@@ -150,7 +150,10 @@ public:
           : nullptr;
     };
     mGetInstructionFunction = [Matcher](Instruction *I) {
-      return cast<Instruction>((**Matcher)[I]);
+      auto Instr = (**Matcher)[I];
+      return Instr
+          ? cast<Instruction>(Instr)
+          : nullptr;
     };
   }
 
@@ -310,9 +313,14 @@ private:
 
   bool isSplittableDependence(Instruction *Read, Instruction *Write,
       const unsigned LoopDepth) const {
+    const auto ServerWrite = mGetInstructionFunction(Write);
+    const auto ServerRead = mGetInstructionFunction(Read);
+    if (!ServerWrite || !ServerRead) {
+      return false;
+    }
     // TODO: Probably true instead of false
-    const auto Dependence = mDependence->depends(
-        mGetInstructionFunction(Write), mGetInstructionFunction(Read), false);
+    const auto Dependence =
+        mDependence->depends(ServerWrite, ServerRead, false);
     if (!Dependence) {
       return false;
     }
