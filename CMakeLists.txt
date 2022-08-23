@@ -193,6 +193,18 @@ else()
     DESTINATION ${TSAR_INCLUDE_PATH}/.. FILES_MATCHING PATTERN *.h)
   set(CLANG_INCLUDE_DIR "${LLVM_BINARY_DIR}/$<CONFIG>/lib/clang/${LLVM_VERSION}/include")
   set(CLANG_EXECUTABLE "${LLVM_BINARY_DIR}/$<CONFIG>/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
+  if (BUILD_PROFILE)
+    string(REGEX REPLACE "[A-Za-z].*" "" TSAR_LLVM_VERSION ${LLVM_VERSION})
+    set(TSAR_LIBRARY_PATH "lib/clang/${TSAR_LLVM_VERSION}/lib")
+    add_custom_target(tsar-resource-profile ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_directory "${LLVM_BINARY_DIR}/$<CONFIG>/${TSAR_LIBRARY_PATH}"
+                                                 "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_LIBRARY_PATH}"
+      COMMENT "Copy runtime libraries to ${TSAR_LIBRARY_PATH}...")
+    add_dependencies(tsar-resource-profile compiler-rt)
+    set_target_properties(tsar-resource-profile PROPERTIES
+      FOLDER Misc
+      RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_LIBRARY_PATH}")
+  endif()
   sapfor_install_llvm()
 endif(PACKAGE_LLVM)
 
