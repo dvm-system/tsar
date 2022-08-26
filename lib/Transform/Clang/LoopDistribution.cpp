@@ -322,7 +322,7 @@ private:
     const auto Dependence =
         mDependence->depends(ServerWrite, ServerRead, false);
     if (!Dependence) {
-      return false;
+      return true;
     }
 
     const auto Direction = Dependence->getDirection(LoopDepth);
