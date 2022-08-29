@@ -36,6 +36,7 @@
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include "tsar/Analysis/Memory/MemoryTraitUtils.h"
+#include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
@@ -448,15 +449,30 @@ private:
 }
 
 bool LoopDistributionPass::runOnFunction(Function& Function) {
-  auto *Module = Function.getParent();
-  auto& TransformationInfo =
-      getAnalysis<TransformationEnginePass>();
-  if (!TransformationInfo) {
+  auto *DISub{findMetadata(&Function)};
+  if (!DISub) {
     return false;
   }
 
-  auto *TransformationContext = TransformationInfo->getContext(*Module);
-  if (!TransformationContext || !TransformationContext->hasInstance()) {
+  auto *CompileUnit{DISub->getUnit()};
+  if (!isC(CompileUnit->getSourceLanguage())
+    && !isCXX(CompileUnit->getSourceLanguage())) {
+    return false;
+  }
+  
+  auto& TransformationInfo =
+      getAnalysis<TransformationEnginePass>();
+  auto *TransformationContext{
+      TransformationInfo
+    ? dyn_cast_or_null<ClangTransformationContext>(
+      TransformationInfo->getContext(*CompileUnit))
+    : nullptr};
+  if (!TransformationContext
+    || !TransformationContext->hasInstance()) {
+    Function.getContext().emitError(
+        "cannot transform sources: "
+        "transformation context is not available for the '" +
+        Function.getName() + "' function");
     return false;
   }
 
