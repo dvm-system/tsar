@@ -47,17 +47,14 @@ class AnalysisConsumer : public ASTConsumer {
 public:
   /// Constructor.
   AnalysisConsumer(CompilerInstance &CI, StringRef InFile,
-    TransformationInfo &TfmInfo, QueryManager &QM)
-    : mLLVMIRGeneration(
-      "mLLVMIRGeneration",
-      "LLVM IR Generation Time"
-    ),
-    mCI(&CI), mASTContext(nullptr), mLLVMContext(new LLVMContext),
-    mGen(CreateLLVMCodeGen(CI.getDiagnostics(), InFile,
-      CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
-      CI.getCodeGenOpts(), *mLLVMContext)),
-    mTransformInfo(&TfmInfo), mQueryManager(&QM) {
-  }
+                   TransformationInfo &TfmInfo, QueryManager &QM)
+      : mLLVMIRGeneration("mLLVMIRGeneration", "LLVM IR Generation Time"),
+        mCI(&CI), mASTContext(nullptr), mLLVMContext(new LLVMContext),
+        mGen(CreateLLVMCodeGen(
+            CI.getDiagnostics(), InFile, &CI.getVirtualFileSystem(),
+            CI.getHeaderSearchOpts(), CI.getPreprocessorOpts(),
+            CI.getCodeGenOpts(), *mLLVMContext)),
+        mTransformInfo(&TfmInfo), mQueryManager(&QM) {}
 
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD) override {
     mGen->HandleCXXStaticMemberVarInstantiation(VD);

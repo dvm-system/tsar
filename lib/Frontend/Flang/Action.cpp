@@ -52,30 +52,33 @@ using namespace Fortran;
 
 bool tsar::FlangMainAction::beginSourceFileAction() {
   using namespace Fortran::frontend;
-  // CodeGenAction::BeginSourceFileAction() is private, so we cannot call
-  // it explicitly here. We also want to extend it functionality here, so
-  // we juast copy its implementation.
-
-  llvmCtx = std::make_unique<llvm::LLVMContext>();
-
-  // If the input is an LLVM file, just parse it and return.
-  if (this->getCurrentInput().getKind().getLanguage() == Language::LLVM_IR)
+  if (this->getCurrentInput().getKind().getLanguage() == Language::LLVM_IR ||
+      this->getCurrentInput().getKind().getLanguage() == Language::MLIR)
     return false;
 
-  // Otherwise, generate an MLIR module from the input Fortran source
+  // CodeGenAction::beginSourceFileAction() is private, so we cannot call
+  // it explicitly here. We also want to extend it functionality here, so
+  // we have just copied its implementation.
+
+  llvmCtx = std::make_unique<llvm::LLVMContext>();
+  CompilerInstance &ci = this->getInstance();
+
+  // Generate an MLIR module from the input Fortran source
   assert(getCurrentInput().getKind().getLanguage() == Language::Fortran &&
          "Invalid input type - expecting a Fortran file");
-  bool res = runPrescan() && runParse() && runSemanticChecks();
+  bool res = runPrescan() && runParse() && runSemanticChecks() &&
+             generateRtTypeTables();
   if (!res)
     return res;
 
-  CompilerInstance &ci = this->getInstance();
 
   // Load the MLIR dialects required by Flang
   mlir::DialectRegistry registry;
   mlirCtx = std::make_unique<mlir::MLIRContext>(registry);
   fir::support::registerNonCodegenDialects(registry);
   fir::support::loadNonCodegenDialects(*mlirCtx);
+  fir::support::loadDialects(*mlirCtx);
+  fir::support::registerLLVMTranslation(*mlirCtx);
 
   // Create a LoweringBridge
   const common::IntrinsicTypeDefaultKinds &defKinds =
@@ -84,6 +87,7 @@ bool tsar::FlangMainAction::beginSourceFileAction() {
       llvm::ArrayRef<fir::KindTy>{fir::fromDefaultKinds(defKinds)});
   lower::LoweringBridge lb = Fortran::lower::LoweringBridge::create(
       *mlirCtx, defKinds, ci.getInvocation().getSemanticsContext().intrinsics(),
+      ci.getInvocation().getSemanticsContext().targetCharacteristics(),
       ci.getParsing().allCooked(), ci.getInvocation().getTargetOpts().triple,
       kindMap);
 
