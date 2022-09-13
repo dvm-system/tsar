@@ -163,13 +163,14 @@ Function * tsar::createEmptyInitDI(Module &M, Type &IdTy) {
   return Func;
 }
 
-GlobalVariable * tsar::getOrCreateDIPool(Module &M) {
+std::pair<GlobalVariable *, Type *> tsar::getOrCreateDIPool(Module &M) {
   auto *DIPoolTy = PointerType::getUnqual(Type::getInt8PtrTy(M.getContext()));
   if (auto *DIPool = M.getNamedValue("sapfor.di.pool")) {
     if (isa<GlobalVariable>(DIPool) && DIPool->getValueType() == DIPoolTy &&
         cast<GlobalVariable>(DIPool)->getMetadata("sapfor.da"))
-      return cast<GlobalVariable>(DIPool);
-    return nullptr;
+      return std::pair{cast<GlobalVariable>(DIPool),
+                       cast<Type>(Type::getInt8PtrTy(M.getContext()))};
+    return {nullptr, nullptr};
   }
   auto DIPool = new GlobalVariable(M, DIPoolTy, false,
     GlobalValue::LinkageTypes::ExternalLinkage,
@@ -178,7 +179,7 @@ GlobalVariable * tsar::getOrCreateDIPool(Module &M) {
     "Unable to crate a metadata pool!");
   DIPool->setAlignment(MaybeAlign(4));
   DIPool->setMetadata("sapfor.da", MDNode::get(M.getContext(), {}));
-  return DIPool;
+  return std::pair{DIPool, cast<Type>(Type::getInt8PtrTy(M.getContext()))};
 }
 
 Type * tsar::getInstrIdType(LLVMContext &Ctx) {
@@ -236,7 +237,7 @@ void Instrumentation::visitModule(Module &M, InstrumentationPass &IP) {
   mDIStrings.clear(DIStringRegister::numberOfItemTypes());
   mTypes.clear();
   auto &Ctx = M.getContext();
-  mDIPool = getOrCreateDIPool(M);
+  std::tie(mDIPool, mDIPoolElementTy) = getOrCreateDIPool(M);
   auto IdTy = getInstrIdType(Ctx);
   assert(IdTy && "Offset type must not be null!");
   mInitDIAll = createEmptyInitDI(M, *IdTy);
@@ -967,7 +968,7 @@ void Instrumentation::regTypes(Module& M) {
   auto *Counter = PHINode::Create(SizeTy, 0, "typeidx", LoopBB);
   Counter->addIncoming(Int0, EntryBB);
   auto *GEP = GetElementPtrInst::Create(
-    nullptr, IdsArray, { Int0, Counter }, "arrayidx", LoopBB);
+    IdsArray->getValueType(), IdsArray, { Int0, Counter }, "arrayidx", LoopBB);
   auto *LocalTypeId = new LoadInst(
     GEP->getResultElementType(), GEP, "typeid", false, LoopBB);
   auto Add = BinaryOperator::CreateNUW(
@@ -979,10 +980,10 @@ void Instrumentation::regTypes(Module& M) {
   auto *Cmp = new ICmpInst(*LoopBB, CmpInst::ICMP_ULT, Inc, Size, "cmp");
   auto *EndBB = BasicBlock::Create(M.getContext(), "end", RegTypeFunc);
   BranchInst::Create(LoopBB, EndBB, Cmp, LoopBB);
-  auto *IdsArg = GetElementPtrInst::Create(nullptr, IdsArray,
+  auto *IdsArg = GetElementPtrInst::Create(IdsArray->getValueType(), IdsArray,
     { Int0, Int0 }, "ids", EndBB);
-  auto *SizesArg = GetElementPtrInst::Create(nullptr, SizesArray,
-    { Int0, Int0 }, "sizes", EndBB);
+  auto *SizesArg = GetElementPtrInst::Create(
+      SizesArray->getValueType(), SizesArray, {Int0, Int0}, "sizes", EndBB);
   CallInst::Create(DeclTypeFunc, { Size, IdsArg, SizesArg }, "", EndBB);
   ReturnInst::Create(Ctx, EndBB);
   NumType += Ids.size();
@@ -1000,8 +1001,8 @@ void Instrumentation::createInitDICall(const llvm::Twine &Str,
   auto InitDIFunc = getDeclaration(M, IntrinsicId::init_di);
   auto IdxV = ConstantInt::get(Type::getInt64Ty(M->getContext()), Idx);
   auto DIPoolPtr = new LoadInst(mDIPool->getValueType(), mDIPool, "dipool", T);
-  auto GEP =
-    GetElementPtrInst::Create(nullptr, DIPoolPtr, { IdxV }, "arrayidx", T);
+  auto GEP = GetElementPtrInst::Create(mDIPoolElementTy, DIPoolPtr, {IdxV},
+                                       "arrayidx", T);
   SmallString<256> SingleStr;
   auto DIString = createDIStringPtr(Str.toStringRef(SingleStr), *T);
   auto Offset = &*mInitDIAll->arg_begin();
@@ -1030,7 +1031,8 @@ LoadInst* Instrumentation::createPointerToDI(
   auto DIPoolPtr =
     new LoadInst(mDIPool->getValueType(), mDIPool, "dipool", &InsertBefore);
   DIPoolPtr->setMetadata("sapfor.da", MD);
-  auto GEP = GetElementPtrInst::Create(nullptr, DIPoolPtr, {IdxV}, "arrayidx");
+  auto GEP = GetElementPtrInst::Create(mDIPoolElementTy, DIPoolPtr, {IdxV},
+                                       "arrayidx");
   GEP->setMetadata("sapfor.da", MD);
   GEP->insertAfter(DIPoolPtr);
   GEP->setIsInBounds(true);
@@ -1314,7 +1316,7 @@ void tsar::visitEntryPoint(Function &Entry, ArrayRef<Module *> Modules) {
   auto *InsertBefore = &Entry.getEntryBlock().front();
   auto AllocatePoolFunc = getDeclaration(EntryM, IntrinsicId::allocate_pool);
   auto PoolSizeV = ConstantInt::get(PoolSizeTy, PoolSize);
-  auto *DIPool = getOrCreateDIPool(*EntryM);
+  auto *DIPool = getOrCreateDIPool(*EntryM).first;
   if (!DIPool)
     report_fatal_error(Twine("'sapfor.di.pool' is not available for ") +
       EntryM->getSourceFileName());

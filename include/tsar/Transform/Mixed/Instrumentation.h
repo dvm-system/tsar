@@ -99,12 +99,13 @@ LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 /// module.
 llvm::Function * createEmptyInitDI(llvm::Module &M, llvm::Type &IdTy);
 
-/// \brief Returns external variable which refers to a "sapfor.di.pool" in
-/// a specified module.
+/// \brief Return external variable which refers to a "sapfor.di.pool" in
+/// a specified module and a type of a pool element.
 ///
 /// \return This function returns 'nullptr', if a global value with the
 /// 'sapfor.di.pool' name already exists and it can not be used as a pool.
-llvm::GlobalVariable *getOrCreateDIPool(llvm::Module &M);
+std::pair<llvm::GlobalVariable *, llvm::Type *>
+getOrCreateDIPool(llvm::Module &M);
 
 /// \brief Processes a specified entry point.
 ///
@@ -350,6 +351,7 @@ private:
   TypeRegister mTypes;
   DIStringRegister mDIStrings;
   llvm::GlobalVariable *mDIPool = nullptr;
+  llvm::Type *mDIPoolElementTy = nullptr;
   llvm::Function *mInitDIAll = nullptr;
   /// Dominator tree of a currently processed function.
   llvm::DominatorTree *mDT = nullptr;
