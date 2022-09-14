@@ -39,6 +39,7 @@
 #include <bcl/IntrusiveConnection.h>
 #include <bcl/Json.h>
 #include <llvm/Support/Timer.h>
+#include <clang/Frontend/TextDiagnosticPrinter.h>
 #include <clang/Tooling/CompilationDatabase.h>
 #include <clang/Tooling/Tooling.h>
 #ifdef FLANG_FOUND
@@ -232,6 +233,10 @@ int tsar::executeIRAction(StringRef ToolName, ArrayRef<std::string> Sources,
   std::size_t IsOk{Sources.size()};
   Timer ASTGeneration("ASTGeneration", "AST Generation Time");
   Timer LLVMIRAnalysis("LLVMIRAnalysis", "LLVM IR Analysis Time");
+  IntrusiveRefCntPtr<DiagnosticIDs> DiagID{new DiagnosticIDs};
+  IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts{new DiagnosticOptions};
+  auto *DiagsPrinter{new clang::TextDiagnosticPrinter{errs(), &*DiagOpts}};
+  DiagnosticsEngine Diags{DiagID, &*DiagOpts, DiagsPrinter};
   for (auto &File : Sources) {
     SMDiagnostic Err;
     LLVMContext Ctx;
@@ -241,6 +246,10 @@ int tsar::executeIRAction(StringRef ToolName, ArrayRef<std::string> Sources,
       Err.print(ToolName.data(), errs());
       continue;
     }
+    SmallString<128> Path{File};
+    sys::fs::make_absolute(Path);
+    sys::path::native(Path);
+    llvm::sys::path::remove_filename(Path);
     if (Compilations) {
       if (TimePassesIsEnabled)
         ASTGeneration.startTimer();
@@ -266,13 +275,17 @@ int tsar::executeIRAction(StringRef ToolName, ArrayRef<std::string> Sources,
         ASTGeneration.stopTimer();
         LLVMIRAnalysis.startTimer();
       }
+      QM.beginSourceFile(Diags, File, "", Path);
       QM.run(M.get(), &TfmInfo);
+      QM.endSourceFile(false);
       if (TimePassesIsEnabled)
         LLVMIRAnalysis.stopTimer();
     } else {
       if (TimePassesIsEnabled)
         LLVMIRAnalysis.startTimer();
+      QM.beginSourceFile(Diags, File, "", Path);
       QM.run(M.get(), nullptr);
+      QM.endSourceFile(false);
       if (TimePassesIsEnabled)
         LLVMIRAnalysis.stopTimer();
     }
