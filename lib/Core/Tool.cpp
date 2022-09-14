@@ -413,8 +413,9 @@ inline static EmitLLVMQueryManager * getEmitLLVMQM() {
 }
 
 inline static InstrLLVMQueryManager * getInstrLLVMQM(
-    StringRef InstrEntry, ArrayRef<std::string> InstrStart) {
-  static InstrLLVMQueryManager QM(InstrEntry, InstrStart);
+    const GlobalOptions &GlobalOpts, StringRef InstrEntry,
+    ArrayRef<std::string> InstrStart) {
+  static InstrLLVMQueryManager QM(&GlobalOpts, InstrEntry, InstrStart);
   return &QM;
 }
 
@@ -769,7 +770,7 @@ int Tool::run(QueryManager *QM) {
     if (mEmitLLVM)
       QM = getEmitLLVMQM();
     else if (mInstrLLVM)
-      QM = getInstrLLVMQM(mInstrEntry, mInstrStart);
+      QM = getInstrLLVMQM(mGlobalOpts, mInstrEntry, mInstrStart);
     else if (mTfmPass)
       QM = getTransformationQM(mTfmPass, mGlobalOpts);
     else if (mCheck)

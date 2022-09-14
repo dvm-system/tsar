@@ -393,6 +393,7 @@ void InstrLLVMQueryManager::run(llvm::Module *M,
     TransformationInfo *TfmInfo) {
   assert(M && "Module must not be null!");
   legacy::PassManager Passes;
+  Passes.add(createGlobalOptionsImmutableWrapper(mGlobalOptions));
   if (TfmInfo) {
     auto TEP = static_cast<TransformationEnginePass *>(
       createTransformationEnginePass());
