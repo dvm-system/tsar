@@ -24,6 +24,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Frontend/Flang/Tooling.h"
+// TODO (kaniandr@gmail.com): remove the following #undef. It's a trick to avoid
+// LLVM compilation issues. LLVM uses LLVM_CLANG_BASIC_CODEGENOPTIONS_H as
+// a guard in two .h files that define CodeGenOptions for Clang and Flang.
+#undef LLVM_CLANG_BASIC_CODEGENOPTIONS_H
 #include "tsar/Frontend/Flang/Action.h"
 #include <clang/Driver/DriverDiagnostic.h>
 #include <clang/Tooling/CompilationDatabase.h>
