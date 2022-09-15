@@ -61,7 +61,7 @@ endif()
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake ${BCL_CMAKE_MODULE_PATH})
 
 # Minimum LLVM version which is necessary to build TSAR.
-set(LLVM_MIN_VERSION 11.0)
+set(LLVM_MIN_VERSION 15.0)
 
 include(CMakeDependentOption)
 include(BCLCompilerOptions)
@@ -204,6 +204,11 @@ else()
     set_target_properties(tsar-resource-profile PROPERTIES
       FOLDER Misc
       RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/${TSAR_LIBRARY_PATH}")
+  endif()
+  if (MSVC)
+    include(BCLPatch)
+    bcl_patch(PATCHFILE ${PROJECT_SOURCE_DIR}/patches/llvm-${LLVM_VERSION_MAJOR}.patch
+      TARGET ${LLVM_PROJECT_DIR} "" IGNORE "" PATCH_OPTIONS -p0)
   endif()
   sapfor_install_llvm()
 endif(PACKAGE_LLVM)
