@@ -246,7 +246,8 @@ endforeach()
 set(CLANG_LIBS
   clangTooling clangCodeGen clangFrontend clangDriver clangSerialization
   clangParse clangSema clangAnalysis clangRewrite clangEdit clangAST clangLex
-  clangBasic clangASTMatchers clangFormat clangToolingCore clangToolingInclusions)
+  clangBasic clangASTMatchers clangFormat clangToolingCore clangToolingInclusions
+  clangSupport)
 
 if(FLANG_FOUND)
   set(FLANG_LIBS
