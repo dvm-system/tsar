@@ -83,6 +83,9 @@ struct GlobalOptions {
   unsigned UnknownFunctionWeight = 1000000;
   /// Assumed weight of a builtin function if a profile is not available.
   unsigned UnknownBuiltinWeight = 20;
+  /// If profile is available, this value specify the lowest weight of loops
+  /// will be parallelized.
+  unsigned LoopParallelThreshold = 0;
   /// List of regions which should be optimized.
   std::vector<std::string> OptRegions;
   /// This suffix should be add to transformed sources before extension.

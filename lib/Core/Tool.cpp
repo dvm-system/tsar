@@ -170,6 +170,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<std::string> AnalysisUse;
   llvm::cl::opt<std::string> ProfileUse;
   llvm::cl::list<std::string> ObjectFilenames;
+  llvm::cl::opt<unsigned> LoopParallelThreshold;
   llvm::cl::opt<unsigned> UnknownFunctionWeight;
   llvm::cl::opt<unsigned> UnknownBuiltinWeight;
   llvm::cl::list<std::string> OptRegion;
@@ -327,6 +328,10 @@ Options::Options() :
   UnknownBuiltinWeight("unknown-builtin-weight", cl::init(20),
     cl::Hidden, cl::cat(AnalysisCategory),
     cl::desc("Assumed weight of a builtin function if a profile is not available")),
+  LoopParallelThreshold("parallel-loop-min-weight", cl::init(10000000),
+    cl::Hidden, cl::cat(AnalysisCategory),
+    cl::desc("If profile is available, this value specify the lowest "
+             "weight of loops will be parallelized.")),
   OptRegion("foptimize-only", cl::cat(AnalysisCategory), cl::value_desc("regions"),
     cl::ZeroOrMore, cl::ValueRequired, cl::CommaSeparated,
     cl::desc("Allow optimization of specified regions (comma separated list of region names")),
@@ -622,6 +627,7 @@ void Tool::storeCLOptions() {
   }
   mGlobalOpts.MemoryAccessInlineThreshold =
       Options::get().MemoryAccessInlineThreshold;
+  mGlobalOpts.LoopParallelThreshold = Options::get().LoopParallelThreshold;
   mGlobalOpts.UnknownFunctionWeight = Options::get().UnknownFunctionWeight;
   mGlobalOpts.UnknownFunctionWeight = Options::get().UnknownBuiltinWeight;
   mGlobalOpts.OptRegions = Options::get().OptRegion;

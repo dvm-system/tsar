@@ -46,6 +46,7 @@
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
+#include "tsar/Analysis/Reader/RegionWeights.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/Clang/Diagnostic.h"
@@ -138,6 +139,15 @@ bool ClangSMParallelization::findParallelLoops(
       PI->finalize();
     if (!PI || PI && PI->isChildPossible())
       return findParallelLoops(&L, L.begin(), L.end(), Provider, TfmCtx, PI);
+    return false;
+  }
+  auto Weights = &getAnalysis<RegionWeightsEstimator>();
+  auto LoopW = Weights->getSelfWeight(L.getLoopID());
+  if (LoopW.first.isValid() &&
+      LoopW.first < mGlobalOpts->LoopParallelThreshold) {
+    toDiag(Diags, LMatchItr->get<AST>()->getBeginLoc(),
+           tsar::diag::note_parallel_loop_threshold)
+        << mGlobalOpts->LoopParallelThreshold;
     return false;
   }
   auto &Socket = mSocketInfo->getActive()->second;
@@ -494,6 +504,7 @@ void ClangSMParallelization::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ClangRegionCollector>();
   AU.addRequired<DIMemoryEnvironmentWrapper>();
   AU.addRequired<DIArrayAccessWrapper>();
+  AU.addRequired<RegionWeightsEstimator>();
   AU.setPreservesAll();
 }
 

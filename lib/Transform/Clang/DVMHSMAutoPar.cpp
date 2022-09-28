@@ -44,6 +44,7 @@
 #include "tsar/Analysis/Parallel/Passes.h"
 #include "tsar/Analysis/Parallel/Parallellelization.h"
 #include "tsar/Analysis/Parallel/ParallelLoop.h"
+#include "tsar/Analysis/Reader/Passes.h"
 #include "tsar/Core/Query.h"
 #include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"

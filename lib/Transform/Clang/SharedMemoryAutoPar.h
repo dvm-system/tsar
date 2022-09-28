@@ -253,6 +253,7 @@ public:
   INITIALIZE_PASS_DEPENDENCY(ClangRegionCollector)                             \
   INITIALIZE_PASS_DEPENDENCY(ClangExprMatcherPass)                             \
   INITIALIZE_PASS_DEPENDENCY(DIArrayAccessWrapper)                             \
+  INITIALIZE_PASS_DEPENDENCY(RegionWeightsEstimator)                           \
   INITIALIZE_PASS_IN_GROUP_END(passName, arg, name, false, false,              \
                                TransformationQueryManager::getPassRegistry())
 #endif//TSAR_CLANG_SHARED_PARALLEL_H
