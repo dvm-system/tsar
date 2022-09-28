@@ -88,8 +88,11 @@ static uint64_t getExecutionCount(const Instruction &I,
 static int64_t getLoopExecutionCount(const Loop *L,
                                      const coverage::CoverageData &Coverage) {
   // TODO(kaniandr@gmail.com): is it better to count backedge taken count?
-  auto LoopExecutionCount{getExecutionCount(L->getHeader()->back(), Coverage)};
-  return LoopExecutionCount;
+  for (auto &I : *L->getHeader())
+    if (auto LoopExecutionCount{getExecutionCount(I, Coverage)};
+        LoopExecutionCount > 0)
+      return LoopExecutionCount;
+  return 0;
 }
 
 std::pair<InstructionCost, InstructionCost>
