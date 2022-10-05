@@ -668,9 +668,13 @@ bool ClangUnreachableCodeEliminationPass::runOnFunction(Function &F) {
   auto FuncDecl = TfmCtx->getDeclForMangledName(F.getName());
   if (!FuncDecl)
     return false;
+  if (TfmCtx->getContext().getSourceManager().getFileCharacteristic(
+          FuncDecl->getLocation()) != clang::SrcMgr::C_User)
+    return false;
   auto GO{getAnalysis<GlobalOptionsImmutableWrapper>().getOptions()};
   if (GO.ProfileUse.empty()) {
-    // TODO: emit diagnostic
+    toDiag(TfmCtx->getContext().getDiagnostics(), FuncDecl->getLocation(),
+           tsar::diag::err_no_coverage_file);
     return false;
   }
   std::vector<StringRef> ObjectFilenames{GO.ObjectFilenames.size()};
@@ -679,9 +683,10 @@ bool ClangUnreachableCodeEliminationPass::runOnFunction(Function &F) {
   auto CoverageOrErr{
       coverage::CoverageMapping::load(ObjectFilenames, GO.ProfileUse)};
   if (auto E{CoverageOrErr.takeError()}) {
-    F.getContext().diagnose(DiagnosticInfoPGOProfile(
-        GO.ProfileUse.data(),
-        Twine("unable to load coverage data: ") + toString(std::move(E))));
+    toDiag(TfmCtx->getContext().getDiagnostics(),
+           FuncDecl->getLocation(),
+           tsar::diag::warn_no_coverage_data)
+        << GO.ProfileUse << toString(std::move(E));
     return false;
   }
   auto FRI{find_if((**CoverageOrErr).getCoveredFunctions(),
@@ -689,7 +694,10 @@ bool ClangUnreachableCodeEliminationPass::runOnFunction(Function &F) {
                      return FR.Name == F.getName();
                    })};
   if (FRI == (**CoverageOrErr).getCoveredFunctions().end()) {
-    // TODO: emit diagnostic
+    toDiag(TfmCtx->getContext().getDiagnostics(),
+           FuncDecl->getLocation(),
+           tsar::diag ::warn_no_coverage_data_for)
+        << GO.ProfileUse << F.getName();
     return false;
   }
   auto Coverage{(**CoverageOrErr).getCoverageForFunction(*FRI)};

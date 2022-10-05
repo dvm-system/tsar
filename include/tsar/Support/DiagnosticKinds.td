@@ -107,6 +107,10 @@ def note_assert_no_macro : Note<"macro found">;
 def warn_disable_remove_unreachable : Warning<"disable unreachable code elimination">;
 def note_remove_unreachable_macro_prevent : Warning<"macro prevent unreachable code elimination">;
 
+def err_no_coverage_file: Error<"code coverage file must be specified">;
+def warn_no_coverage_data : Warning<"unable to load coverage data from '%0': %1">;
+def warn_no_coverage_data_for : Warning<"unable to load coverage data from '%0' for '%1'">;
+
 def warn_rename_macro_prevent : Warning<"macro prevent renaming">;
 
 def warn_propagate_macro_prevent : Warning<"macro prevent expression propagation">;
