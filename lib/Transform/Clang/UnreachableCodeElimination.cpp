@@ -26,6 +26,7 @@
 #include "tsar/Analysis/Clang/GlobalInfoExtractor.h"
 #include "tsar/Analysis/Memory/Utils.h"
 #include "tsar/Core/Query.h"
+#include "tsar/Frontend/Clang/Pragma.h"
 #include "tsar/Frontend/Clang/TransformationContext.h"
 #include "tsar/Support/GlobalOptions.h"
 #include "tsar/Support/MetadataUtils.h"
@@ -70,22 +71,57 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 };
 
-class UnreachableCodeVisitor : public clang::RecursiveASTVisitor<UnreachableCodeVisitor> {
+class UnreachableCodeVisitor
+    : public clang::RecursiveASTVisitor<UnreachableCodeVisitor> {
   using WarningDescription =
       std::pair<decltype(tsar::diag::NUM_BUILTIN_TSAR_DIAGNOSTICS),
                 decltype(tsar::diag::NUM_BUILTIN_TSAR_DIAGNOSTICS)>;
 
 public:
   explicit UnreachableCodeVisitor(clang::Rewriter &Rewriter,
-                           const coverage::CoverageData &Coverage)
-      : mRewriter(&Rewriter), mCoverage(Coverage),
+                                  const coverage::CoverageData &Coverage,
+                                  const ASTImportInfo &ImportInfo)
+      : mRewriter(&Rewriter), mCoverage(Coverage), mImportInfo(ImportInfo),
         mSourceManager(Rewriter.getSourceMgr()),
         mLangOpts(Rewriter.getLangOpts()) {}
 
   bool TraverseStmt(clang::Stmt *S) {
     if (!S)
       return RecursiveASTVisitor::TraverseStmt(S);
-    if (isUnreachable(*S) &&
+    Pragma P(*S);
+    if (P) {
+      if (findClause(P, ClauseId::RemoveUnreachable, mClauses)) {
+        llvm::SmallVector<clang::CharSourceRange, 8> ToRemove;
+        auto IsPossible = pragmaRangeToRemove(P, mClauses, mSourceManager,
+                                              mLangOpts, mImportInfo, ToRemove);
+        if (!IsPossible.first)
+          if (IsPossible.second & PragmaFlags::IsInMacro)
+            toDiag(mSourceManager.getDiagnostics(),
+                   mClauses.front()->getBeginLoc(),
+                   tsar::diag::warn_remove_directive_in_macro);
+          else if (IsPossible.second & PragmaFlags::IsInHeader)
+            toDiag(mSourceManager.getDiagnostics(),
+                   mClauses.front()->getBeginLoc(),
+                   tsar::diag::warn_remove_directive_in_include);
+          else
+            toDiag(mSourceManager.getDiagnostics(),
+                   mClauses.front()->getBeginLoc(),
+                   tsar::diag::warn_remove_directive);
+        Rewriter::RewriteOptions RemoveEmptyLine;
+        /// TODO (kaniandr@gmail.com): it seems that RemoveLineIfEmpty is
+        /// set to true then removing (in RewriterBuffer) works incorrect.
+        RemoveEmptyLine.RemoveLineIfEmpty = false;
+        for (auto SR : ToRemove)
+          mRewriter->RemoveText(SR, RemoveEmptyLine);
+      }
+      return true;
+    }
+    if (!mClauses.empty() && !isa<CompoundStmt>(S)) {
+      toDiag(mSourceManager.getDiagnostics(), mClauses.front()->getBeginLoc(),
+        tsar::diag::warn_unexpected_directive);
+      mClauses.clear();
+    }
+    if (mIsActive && isUnreachable(*S) &&
         !isMacroPrevent(S->getBeginLoc(), S->getBeginLoc(), S->getEndLoc())) {
       toDiag(mSourceManager.getDiagnostics(), S->getBeginLoc(),
              tsar::diag::remark_remove_unreachable);
@@ -95,7 +131,20 @@ public:
     return RecursiveASTVisitor::TraverseStmt(S);
   }
 
+  bool TraverseCompoundStmt(CompoundStmt *S) {
+    if (mClauses.empty())
+      return RecursiveASTVisitor::TraverseCompoundStmt(S);
+    mClauses.clear();
+    bool StashIsActive = mIsActive;
+    mIsActive = true;
+    auto Res{RecursiveASTVisitor::TraverseCompoundStmt(S)};
+    mIsActive = StashIsActive;
+    return true;
+  }
+
   bool TraverseSwitchStmt(clang::SwitchStmt *Switch) {
+    if (!mIsActive)
+      return RecursiveASTVisitor::TraverseSwitchStmt(Switch);
     bool HasReachable{false};
     for (SwitchCase *Case{Switch->getSwitchCaseList()}, *Prev{nullptr}; Case;
          Prev = Case, Case = Case->getNextSwitchCase()) {
@@ -131,6 +180,8 @@ public:
   }
 
   bool TraverseBinaryOperator(clang::BinaryOperator *BO) {
+    if (!mIsActive)
+      return RecursiveASTVisitor::TraverseBinaryOperator(BO);
     if (BO->isLogicalOp())
       if (auto *RHS{BO->getRHS()};
           isUnreachable(*RHS) &&
@@ -146,6 +197,8 @@ public:
   }
 
   bool TraverseConditionalOperator(clang::ConditionalOperator *CO) {
+    if (!mIsActive)
+      return RecursiveASTVisitor::TraverseConditionalOperator(CO);
     if (auto *True{CO->getTrueExpr()}; isUnreachable(*True)) {
       if (auto *S{findSideEffect(*CO->getCond())}) {
         toDiag(mSourceManager.getDiagnostics(), CO->getCond()->getBeginLoc(),
@@ -225,6 +278,8 @@ public:
   }
 
   bool TraverseIfStmt(clang::IfStmt *If) {
+    if (!mIsActive)
+      return RecursiveASTVisitor::TraverseIfStmt(If);
     auto Then{If->getThen()};
     auto Else{If->getElse()};
     bool ThenUnreachable{Then && isUnreachable(*Then) &&
@@ -345,6 +400,8 @@ public:
   }
 
   bool TraverseWhileStmt(WhileStmt *While) {
+    if (!mIsActive)
+      return RecursiveASTVisitor::TraverseWhileStmt(While);
     auto *Body{While->getBody()};
     if (Body && isUnreachable(*Body) &&
         !isMacroPrevent(Body->getBeginLoc(), Body->getBeginLoc(),
@@ -388,6 +445,8 @@ public:
   }
 
   bool TraverseForStmt(clang::ForStmt *For) {
+    if (!mIsActive)
+      return RecursiveASTVisitor::TraverseForStmt(For);
     auto *Body{For->getBody()};
     if (Body && isUnreachable(*Body) &&
         !isMacroPrevent(Body->getBeginLoc(), Body->getBeginLoc(),
@@ -580,8 +639,11 @@ private:
 
   clang::Rewriter *mRewriter;
   const coverage::CoverageData &mCoverage;
+  const ASTImportInfo &mImportInfo;
   clang::SourceManager &mSourceManager;
   const clang::LangOptions &mLangOpts;
+  bool mIsActive{false};
+  SmallVector<Stmt *, 1> mClauses;
 };
 }
 
@@ -631,7 +693,12 @@ bool ClangUnreachableCodeEliminationPass::runOnFunction(Function &F) {
     return false;
   }
   auto Coverage{(**CoverageOrErr).getCoverageForFunction(*FRI)};
-  UnreachableCodeVisitor{TfmCtx->getRewriter(), Coverage}.TraverseDecl(FuncDecl);
+  ASTImportInfo ImportStub;
+  const auto *ImportInfo = &ImportStub;
+  if (auto *ImportPass = getAnalysisIfAvailable<ImmutableASTImportInfoPass>())
+    ImportInfo = &ImportPass->getImportInfo();
+  UnreachableCodeVisitor{TfmCtx->getRewriter(), Coverage, *ImportInfo}
+      .TraverseDecl(FuncDecl);
   return false;
 }
 

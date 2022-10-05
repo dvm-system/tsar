@@ -136,6 +136,8 @@ def Propagate : Clause<"propagate", Transform>;
 
 def Rename : Clause<"rename", Transform>;
 
+def RemoveUnreachable : Clause<"removeunreachable", Transform>;
+
 def LoopInterchange : Clause<"interchange", Transform,
   [LParen, PPIdentifier, Comma, PPIdentifier, RParen]>;
 
