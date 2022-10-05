@@ -47,6 +47,7 @@ class FunctionDecl;
 class LangOptions;
 class MemoryBuffer;
 class SourceManager;
+class Stmt;
 }
 
 namespace tsar {
@@ -318,5 +319,8 @@ llvm::Optional<OutputFile> createDefaultOutputFile(
     llvm::StringRef Extension = "", bool RemoveFileOnSignal = true,
     bool UseTemporary = true,
     bool CreateMissingDirectories = false);
+
+/// Return a statement which cause a side effect inside a specified statement.
+const clang::Stmt *findSideEffect(const clang::Stmt &S);
 }
 #endif//TSAR_CLANG_UTILS_H

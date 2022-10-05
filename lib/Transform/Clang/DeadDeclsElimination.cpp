@@ -242,22 +242,6 @@ private:
     return nullptr;
   }
 
-  /// Return true if there is a side effect inside a specified statement.
-  const Stmt * findSideEffect(const Stmt &S) {
-    if (!isa<CallExpr>(S) &&
-        !(isa<clang::BinaryOperator>(S) &&
-          cast<clang::BinaryOperator>(S).isAssignmentOp()) &&
-        !(isa<clang::UnaryOperator>(S) &&
-          cast<clang::UnaryOperator>(S).isIncrementDecrementOp())) {
-      for (auto Child : make_range(S.child_begin(), S.child_end()))
-        if (Child)
-          if (auto SideEffect = findSideEffect(*Child))
-          return SideEffect;
-      return nullptr;
-    }
-    return &S;
-  }
-
   std::map<NamedDecl *, DeclarationInfo> mDeadDecls;
   std::vector<Stmt*> mScopes;
   clang::Rewriter *mRewriter;

@@ -104,6 +104,9 @@ def note_end_location : Note<"end is here">;
 def err_assert : Error<"assert violation">;
 def note_assert_no_macro : Note<"macro found">;
 
+def warn_disable_remove_unreachable : Warning<"disable unreachable code elimination">;
+def note_remove_unreachable_macro_prevent : Warning<"macro prevent unreachable code elimination">;
+
 def warn_rename_macro_prevent : Warning<"macro prevent renaming">;
 
 def warn_propagate_macro_prevent : Warning<"macro prevent expression propagation">;

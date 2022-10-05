@@ -2,7 +2,7 @@ set(TRANSFORM_SOURCES Passes.cpp ExprPropagation.cpp Inline.cpp RenameLocal.cpp
   DeadDeclsElimination.cpp Format.cpp OpenMPAutoPar.cpp DVMHWriter.cpp
   SharedMemoryAutoPar.cpp DVMHDirecitves.cpp DVMHSMAutoPar.cpp
   DVMHDataTransferIPO.cpp StructureReplacement.cpp LoopInterchange.cpp
-  LoopReversal.cpp)
+  LoopReversal.cpp UnreachableCodeElimination.cpp)
 
 if(MSVC_IDE)
   file(GLOB_RECURSE TRANSFORM_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}

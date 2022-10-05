@@ -482,3 +482,18 @@ Optional<OutputFile> tsar::createDefaultOutputFile(
       << OutputPath << errorToErrorCode(OF.takeError()).message();
   return None;
 }
+
+const clang::Stmt * tsar::findSideEffect(const clang::Stmt &S) {
+  if (!isa<CallExpr>(S) &&
+      !(isa<clang::BinaryOperator>(S) &&
+        cast<clang::BinaryOperator>(S).isAssignmentOp()) &&
+      !(isa<clang::UnaryOperator>(S) &&
+        cast<clang::UnaryOperator>(S).isIncrementDecrementOp())) {
+    for (auto Child : make_range(S.child_begin(), S.child_end()))
+      if (Child)
+        if (auto SideEffect = findSideEffect(*Child))
+        return SideEffect;
+    return nullptr;
+  }
+  return &S;
+}

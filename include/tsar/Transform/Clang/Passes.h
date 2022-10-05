@@ -114,5 +114,12 @@ void initializeClangLoopReversePass(PassRegistry &Registry);
 
 /// Create a pass to reverse loop.
 ModulePass *createClangLoopReverse();
+
+/// Initialize a pass to eliminate unreachable code.
+void initializeClangUnreachableCodeEliminationPassPass(PassRegistry &Registry);
+
+/// Create a pass to eliminate unreachable code.
+FunctionPass *createClangUnreachableCodeEliminationPass();
+
 }
 #endif//TSAR_CLANG_TRANSFORM_PASSES_H
