@@ -638,6 +638,8 @@ void ClangDVMHSMParallelization::optimizeLevel(
   if (!DISub)
     return;
   auto *CU{DISub->getUnit()};
+  if (!CU)
+    return;
   if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return;
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};

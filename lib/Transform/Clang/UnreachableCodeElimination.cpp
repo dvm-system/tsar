@@ -652,6 +652,8 @@ bool ClangUnreachableCodeEliminationPass::runOnFunction(Function &F) {
   if (!DISub)
     return false;
   auto *CU{DISub->getUnit()};
+  if (!CU)
+    return false;
   if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return false;
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
@@ -737,4 +739,3 @@ INITIALIZE_PASS_IN_GROUP_END(ClangUnreachableCodeEliminationPass,
                              "Unreachable Code Elimination (Clang)", false,
                              false,
                              TransformationQueryManager::getPassRegistry())
-

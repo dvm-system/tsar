@@ -1455,6 +1455,8 @@ bool ClangDVMHWriter::runOnModule(llvm::Module &M) {
       return false;
     }
     auto *CU{DISub->getUnit()};
+    if (!CU)
+      return false;
     if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage())) {
       emitTfmError();
       return false;

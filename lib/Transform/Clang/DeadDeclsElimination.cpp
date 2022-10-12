@@ -256,6 +256,8 @@ bool ClangDeadDeclsElimination::runOnFunction(Function &F) {
   if (!DISub)
     return false;
   auto *CU{DISub->getUnit()};
+  if (!CU)
+    return false;
   if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return false;
   auto &TfmInfo{getAnalysis<TransformationEnginePass>()};

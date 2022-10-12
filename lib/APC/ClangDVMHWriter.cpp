@@ -455,7 +455,8 @@ bool APCClangDVMHWriter::runOnModule(llvm::Module &M) {
         auto &F{*LS->getFunction()};
         if (auto *DISub{findMetadata(&F)})
           if (auto *CU{DISub->getUnit()};
-              isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+              CU && (isC(CU->getSourceLanguage()) ||
+                     isCXX(CU->getSourceLanguage()))) {
             auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                                        TfmInfo->getContext(*CU))
                                  : nullptr};

@@ -211,6 +211,8 @@ bool APCClangDirectivesCollector::runOnModule(llvm::Module& M) {
     if (!DISub)
       continue;
     auto *CU{DISub->getUnit()};
+    if (!CU)
+      continue;
     if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
       continue;
     auto *TfmCtx{

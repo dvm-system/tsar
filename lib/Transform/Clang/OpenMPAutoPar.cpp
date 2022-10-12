@@ -429,8 +429,8 @@ void ClangOpenMPParallelization::optimizeLevel(
               ? Level.get<Function *>()
               : Level.get<Loop *>()->getHeader()->getParent()};
   if (auto *DISub{findMetadata(F)})
-    if (auto *CU{DISub->getUnit()};
-        isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+    if (auto *CU{DISub->getUnit()}; CU && (isC(CU->getSourceLanguage()) ||
+                                           isCXX(CU->getSourceLanguage()))) {
       auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
       auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                                  TfmInfo->getContext(*CU))
@@ -654,6 +654,8 @@ bool ClangOpenMPParallelization::runOnModule(llvm::Module &M) {
       return false;
     }
     auto *CU{DISub->getUnit()};
+    if (!CU)
+      return false;
     if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage())) {
       emitTfmError();
       return false;

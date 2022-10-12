@@ -165,6 +165,8 @@ bool APCLoopInfoBasePass::runOnFunction(Function &F) {
   auto *DISub{findMetadata(&F)};
   if (!DISub)
     return false;
+  if (!CU)
+    return false;
   auto *CU{DISub->getUnit()};
   if (!isC(CU->getSourceLanguage()) && !isCXX(CU->getSourceLanguage()))
     return false;

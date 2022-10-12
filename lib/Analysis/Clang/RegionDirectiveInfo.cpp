@@ -238,7 +238,8 @@ bool ClangRegionCollector::runOnModule(llvm::Module &M) {
         auto &Provider = getAnalysis<ClangRegionCollectorProvider>(*F);
         if (auto *DISub{findMetadata(F)})
           if (auto *CU{DISub->getUnit()};
-              isC(CU->getSourceLanguage()) || isCXX(CU->getSourceLanguage())) {
+              CU && (isC(CU->getSourceLanguage()) ||
+                     isCXX(CU->getSourceLanguage()))) {
             auto &TfmInfo{getAnalysis<TransformationEnginePass>()};
             auto *TfmCtx{TfmInfo ? dyn_cast_or_null<ClangTransformationContext>(
                                        TfmInfo->getContext(*CU))
