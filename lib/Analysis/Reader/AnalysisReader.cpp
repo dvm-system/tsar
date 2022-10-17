@@ -456,9 +456,9 @@ bool AnalysisReader::runOnFunction(Function &F) {
       if (!Var)
         continue;
       LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: update traits for a variable "
-                        << Var.get<Identifier>() << " defined at "
-                        << DIVar->getFilename() << ":" << Var.get<Line>() << ":"
-                        << Var.get<Column>() << "\n");
+                        << Var->get<Identifier>() << " defined at "
+                        << DIVar->getFilename() << ":" << Var->get<Line>()
+                        << ":" << Var->get<Column>() << "\n");
       auto TraitItr = TraitCache.find(*Var);
       if (TraitItr == TraitCache.end()) {
         LLVM_DEBUG(
