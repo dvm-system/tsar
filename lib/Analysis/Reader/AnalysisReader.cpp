@@ -34,6 +34,7 @@
 #include "tsar/Support/MetadataUtils.h"
 #include "tsar/Support/Tags.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
+#include "tsar/Unparse/VariableLocation.h"
 #include <bcl/cell.h>
 #include <bcl/utility.h>
 #include <bcl/tagged.h>
@@ -54,11 +55,6 @@ using namespace tsar;
 #define DEBUG_TYPE "analysis-reader"
 
 namespace {
-struct File {};
-struct Line {};
-struct Column {};
-struct Identifier {};
-
 /// Position of a function in a source code.
 using FunctionT = bcl::tagged_tuple<
   bcl::tagged<sys::fs::UniqueID, File>,
@@ -78,13 +74,6 @@ using LocationT = bcl::tagged_tuple<
 /// Map from a loop location to a loop index in a list of loops in
 /// external analysis results.
 using LoopCache = std::map<LocationT, std::size_t>;
-
-/// Position of a variable in a source code.
-using VariableT = bcl::tagged_tuple<
-  bcl::tagged<sys::fs::UniqueID, File>,
-  bcl::tagged<trait::LineTy, Line>,
-  bcl::tagged<trait::ColumnTy, Column>,
-  bcl::tagged<std::string, Identifier>>;
 
 /// Tuple of iterators of variable traits stored in external analysis results.
 using TraitT = bcl::tagged_tuple<
@@ -157,7 +146,7 @@ template<class... Tags> bool isOnlyAnyOf(const TraitT &Traits) {
 }
 
 /// Map from variable to its traits in some loop.
-using TraitCache = std::map<VariableT, TraitT>;
+using TraitCache = std::map<VariableLocationT, TraitT>;
 
 /// This pass load results from a specified file and update traits of
 /// metadata-level memory locations accessed in loops.
@@ -213,10 +202,10 @@ LoopCache buildLoopCache(const trait::Info &Info) {
   return Res;
 }
 
-VariableT createVar(trait::IdTy I, const trait::Info &Info) {
+VariableLocationT createVar(trait::IdTy I, const trait::Info &Info) {
   /// TODO (kaniandr@gmail.com): check that index of variable is not out of
   /// range due to incorrect .json created manually.
-  VariableT Var;
+  VariableLocationT Var;
   sys::fs::UniqueID ID;
   if (sys::fs::getUniqueID(Info[trait::Info::Vars][I][trait::Var::File], ID)) {
     LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: ignore variable "
@@ -333,14 +322,19 @@ template<class TraitTag> void updateAntiFlowDep(
       Dep->getLevels() > 0 ? Dep->getLevels() : 1);
   auto &T = *TraitItr->second.template get<TraitTag>();
   auto Min = T->second[trait::Distance::Min];
-  DistVector[0].first = APSInt(APInt(CHAR_BIT * sizeof(Min), Min, true), false);
+  if (Min)
+    DistVector[0].first =
+        APSInt(APInt(CHAR_BIT * sizeof(*Min), *Min, true), false);
   auto Max = T->second[trait::Distance::Max];
-  DistVector[0].second = APSInt(APInt(CHAR_BIT * sizeof(Max), Max, true), false);
+  if (Max)
+    DistVector[0].second =
+        APSInt(APInt(CHAR_BIT * sizeof(*Max), *Max, true), false);
   for (unsigned I = 1, EI = Dep->getLevels(); I < EI; ++I)
     DistVector[I] = Dep->getDistance(I);
   DITrait.template set<TraitTag>(new trait::DIDependence(F, DistVector));
-  LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set distance to [" << Min << ", "
-                    << Max << "]\n");
+  LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set distance to [";
+             if (Min) dbgs() << *Min; else dbgs() << "?"; dbgs() << ", ";
+             if (Max) dbgs() << *Max; else dbgs() << "?"; "]\n");
 }
 
 /// Update description of output dependence in `DITrait` according to
@@ -458,56 +452,14 @@ bool AnalysisReader::runOnFunction(Function &F) {
         continue;
       auto *DIExpr = DIEM->getExpression();
       assert(DIVar && DIExpr && "Invalid memory location!");
-      VariableT Var;
-      SmallVector<DebugLoc, 1> DbgLocs;
-      DIEM->getDebugLoc(DbgLocs);
-      DILocation *DefinitionLoc = nullptr;
-      if (DbgLocs.empty()) {
-        // Column may be omitted for global variables only, because there are
-        // no more than one variable with the same name in a global scope.
-        if (!isa<DIGlobalVariable>(DIVar))
-          continue;
-        DefinitionLoc = DILocation::get(F.getContext(), DIVar->getLine(), 0,
-          DIVar->getScope());
-
-      } else if (DbgLocs.size() > 1) {
-        DefinitionLoc = DbgLocs.front().get();
-        for (auto &DbgLoc : DbgLocs)
-          if (DbgLoc.getLine() < DefinitionLoc->getLine())
-            DefinitionLoc = DbgLoc.get();
-          else if (DbgLoc.getLine() == DefinitionLoc->getLine() &&
-            DbgLoc.getCol() < DefinitionLoc->getColumn())
-            DefinitionLoc = DbgLoc.get();
-      } else {
-        DefinitionLoc = DbgLocs.front().get();
-      }
-      Var.get<Line>() = DefinitionLoc->getLine();
-      Var.get<Column>() = DefinitionLoc->getColumn();
-      SmallString<32> LocToString;
-      auto TmpLoc{DIMemoryLocation::get(
-          const_cast<DIVariable *>(DIEM->getVariable()),
-          const_cast<DIExpression *>(DIEM->getExpression()), DefinitionLoc,
-          DIEM->isTemplate(), DIEM->isAfterPointer())};
-      if (!unparseToString(*DWLang, TmpLoc, LocToString))
+      auto Var{buildVariable(*DWLang, *DIEM)};
+      if (!Var)
         continue;
-      std::replace(LocToString.begin(), LocToString.end(), '*', '^');
-      Var.get<Identifier>() = std::string(LocToString);
-      SmallString<128> Path;
-      sys::fs::UniqueID FileID;
-      if (sys::fs::getUniqueID(getAbsolutePath(*DIVar->getFile(), Path),
-                               FileID)) {
-        LLVM_DEBUG(
-            dbgs() << "[ANALYSIS READER]: can not find traits for variable "
-                   << DIVar->getName() << " unable build unique ID for file"
-                   << DIVar->getFilename() << "\n");
-        continue;
-      }
-      Var.get<File>() = FileID;
       LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: update traits for a variable "
                         << Var.get<Identifier>() << " defined at "
                         << DIVar->getFilename() << ":" << Var.get<Line>() << ":"
                         << Var.get<Column>() << "\n");
-      auto TraitItr = TraitCache.find(Var);
+      auto TraitItr = TraitCache.find(*Var);
       if (TraitItr == TraitCache.end()) {
         LLVM_DEBUG(
             dbgs() << "[ANALYSIS READER]: no external traits are provided\n");

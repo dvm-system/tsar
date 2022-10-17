@@ -46,6 +46,12 @@ FunctionPass * createAnalysisReader(llvm::StringRef Filename = "");
 /// Initialize a reader of external analysis results.
 void initializeAnalysisReaderPass(PassRegistry &Registry);
 
+/// Create a writer of analysis results.
+ModulePass * createAnalysisWriter();
+
+/// Initialize a writer of analysis results.
+void initializeAnalysisWriterPass(PassRegistry &Registry);
+
 /// Initialize a pass to estimate region weights in a source code.
 void initializeRegionWeightsEstimatorPass(PassRegistry &Registry);
 

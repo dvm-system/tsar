@@ -30,6 +30,7 @@
 #include "tsar/Analysis/Memory/MemoryLocationRange.h"
 #include "tsar/Unparse/DIUnparser.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
+#include "tsar/Unparse/VariableLocation.h"
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/Local.h>
@@ -259,4 +260,57 @@ void printDIVariable(raw_ostream &o, DIVariable *DIVar) {
   o << DIVar->getName();
 }
 
+Optional<VariableLocationT> buildVariable(unsigned DWLang,
+                                          const DIEstimateMemory &DIEM,
+                                          SmallVectorImpl<char> &Path) {
+  VariableLocationT Var;
+  auto *DIVar{DIEM.getVariable()};
+  if (isStubVariable(*DIVar))
+    return None;
+  auto *DIExpr{DIEM.getExpression()};
+  assert(DIVar && DIExpr && "Invalid memory location!");
+  SmallVector<DebugLoc, 1> DbgLocs;
+  DIEM.getDebugLoc(DbgLocs);
+  DILocation *DefinitionLoc{nullptr};
+  if (DbgLocs.empty()) {
+    // Column may be omitted for global variables only, because there are
+    // no more than one variable with the same name in a global scope.
+    if (!isa<DIGlobalVariable>(DIVar))
+      return None;
+    DefinitionLoc = DILocation::get(DIVar->getContext(), DIVar->getLine(), 0,
+                                    DIVar->getScope());
+  } else if (DbgLocs.size() > 1) {
+    DefinitionLoc = DbgLocs.front().get();
+    for (auto &DbgLoc : DbgLocs)
+      if (DbgLoc.getLine() < DefinitionLoc->getLine())
+        DefinitionLoc = DbgLoc.get();
+      else if (DbgLoc.getLine() == DefinitionLoc->getLine() &&
+               DbgLoc.getCol() < DefinitionLoc->getColumn())
+        DefinitionLoc = DbgLoc.get();
+  } else {
+    DefinitionLoc = DbgLocs.front().get();
+  }
+  Var.get<Line>() = DefinitionLoc->getLine();
+  Var.get<Column>() = DefinitionLoc->getColumn();
+  SmallString<32> LocToString;
+  auto TmpLoc{DIMemoryLocation::get(
+      const_cast<DIVariable *>(DIEM.getVariable()),
+      const_cast<DIExpression *>(DIEM.getExpression()), DefinitionLoc,
+      DIEM.isTemplate(), DIEM.isAfterPointer())};
+  if (!unparseToString(DWLang, TmpLoc, LocToString))
+    return None;
+  std::replace(LocToString.begin(), LocToString.end(), '*', '^');
+  Var.get<Identifier>() = std::string(LocToString);
+  sys::fs::UniqueID FileID;
+  if (sys::fs::getUniqueID(getAbsolutePath(*DIVar->getFile(), Path), FileID))
+    return None;
+  Var.get<File>() = FileID;
+  return Var;
+}
+
+Optional<VariableLocationT> buildVariable(unsigned DWLang,
+                                          const DIEstimateMemory &DIEM) {
+  SmallString<128> Path;
+  return buildVariable(DWLang, DIEM, Path);
+}
 }

@@ -72,6 +72,18 @@ struct Step {};
 /// This tag is used to provide access to a root object.
 struct Root {};
 
+/// This tag is used to provide access to a description of a file.
+struct File {};
+
+/// This tag is used to provide access to a description of a line.
+struct Line {};
+
+/// This tag is used to provide access to a description of a column.
+struct Column {};
+
+/// This tag is used to provide access to a description of an identifier.
+struct Identifier {};
+
 /// Identifier of an object, for example, loops.
 using ObjectID = llvm::MDNode *;
 }

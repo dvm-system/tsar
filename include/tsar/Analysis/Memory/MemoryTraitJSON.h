@@ -38,16 +38,18 @@ template<> struct Traits<tsar::trait::Reduction::Kind> {
       auto Value = Lex.discardQuote();
       auto S = Lex.json().substr(Value.first, Value.second - Value.first + 1);
       Dest = llvm::StringSwitch<ReductionKind>(S)
-        .Case("Add", tsar::trait::Reduction::RK_Add)
-        .Case("Mult", tsar::trait::Reduction::RK_Mult)
-        .Case("Or", tsar::trait::Reduction::RK_Or)
-        .Case("And", tsar::trait::Reduction::RK_And)
-        .Case("Xor", tsar::trait::Reduction::RK_Xor)
-        .Case("Max", tsar::trait::Reduction::RK_Max)
-        .Case("Min", tsar::trait::Reduction::RK_Min)
-        .Default(tsar::trait::Reduction::RK_NoReduction);
-    }
-    catch (...) {
+                    .CaseLower("Add", tsar::trait::Reduction::RK_Add)
+                    .CaseLower("Mult", tsar::trait::Reduction::RK_Mult)
+                    .CaseLower("Or", tsar::trait::Reduction::RK_Or)
+                    .CaseLower("And", tsar::trait::Reduction::RK_And)
+                    .CaseLower("Xor", tsar::trait::Reduction::RK_Xor)
+                    .CaseLower("Max", tsar::trait::Reduction::RK_Max)
+                    .CaseLower("Min", tsar::trait::Reduction::RK_Min)
+                    .Default(tsar::trait::Reduction::RK_NoReduction);
+      if (Dest == tsar::trait::Reduction::RK_NoReduction &&
+          !Lex.isKeyword(json::Keyword::NO_VALUE))
+        return false;
+    } catch (...) {
       return false;
     }
     return true;
@@ -62,7 +64,10 @@ template<> struct Traits<tsar::trait::Reduction::Kind> {
       case tsar::trait::Reduction::RK_Xor: JSON += "Xor"; break;
       case tsar::trait::Reduction::RK_Max: JSON += "Max"; break;
       case tsar::trait::Reduction::RK_Min: JSON += "Min"; break;
-      default: JSON += "Invalid"; break;
+      default:
+        JSON.pop_back();
+        JSON += json::toString(json::Keyword::NO_VALUE);
+        return;
     }
     JSON += '"';
   }

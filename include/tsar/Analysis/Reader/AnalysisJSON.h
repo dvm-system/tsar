@@ -32,7 +32,7 @@ namespace tsar{
 namespace trait {
 using LineTy = unsigned;
 using ColumnTy = unsigned;
-using DistanceTy = int;
+using DistanceTy = std::optional<int>;
 using IdTy = std::size_t;
 
 /// Definition of a JSON-object which represents a function.
@@ -58,24 +58,37 @@ JSON_OBJECT_END(Var)
 /// Definition of a JSON-object which represents a distance.
 JSON_OBJECT_BEGIN(Distance)
   JSON_OBJECT_PAIR_2(Distance, Min, DistanceTy, Max, DistanceTy)
-  Distance() : JSON_INIT(Distance, 0, 0) {}
+  Distance() : JSON_INIT(Distance, std::nullopt, std::nullopt) {}
   Distance(DistanceTy Min, DistanceTy Max) : JSON_INIT(Distance, Min, Max) {}
 JSON_OBJECT_END(Distance)
 
+/// Definition of a JSON-object which represents a range.
+JSON_OBJECT_BEGIN(Range)
+JSON_OBJECT_PAIR_3(Range
+  , Start, DistanceTy
+  , End, DistanceTy
+  , Step, DistanceTy)
+Range() : JSON_INIT(Range, std::nullopt, std::nullopt, std::nullopt) {}
+Range(DistanceTy Start, DistanceTy End, DistanceTy Step)
+    : JSON_INIT(Range, Start, End, Step) {}
+JSON_OBJECT_END(Range)
+
 /// Definition of a JSON-object which represents a loop and its properties.
 JSON_OBJECT_BEGIN(Loop)
-JSON_OBJECT_PAIR_11(Loop,
+JSON_OBJECT_PAIR_13(Loop,
   File, std::string,
   Line, LineTy,
   Column, ColumnTy,
   Private, std::set<IdTy>,
   Reduction, std::map<BCL_JOIN(IdTy, trait::Reduction::Kind)>,
+  Induction, std::map<BCL_JOIN(IdTy, Range)>,
   Flow, std::map<BCL_JOIN(IdTy, Distance)>,
   Anti, std::map<BCL_JOIN(IdTy, Distance)>,
   Output, std::set<IdTy>,
   WriteOccurred, std::set<IdTy>,
   ReadOccurred, std::set<IdTy>,
-  UseAfterLoop, std::set<IdTy>)
+  UseAfterLoop, std::set<IdTy>,
+  DefBeforeLoop, std::set<IdTy>)
 JSON_OBJECT_END(Loop)
 
 /// Definition of a top-level JSON-object with name 'Info', which contains
@@ -94,6 +107,7 @@ JSON_OBJECT_END(Info)
 JSON_DEFAULT_TRAITS(tsar::trait::, Function)
 JSON_DEFAULT_TRAITS(tsar::trait::, Var)
 JSON_DEFAULT_TRAITS(tsar::trait::, Distance)
+JSON_DEFAULT_TRAITS(tsar::trait::, Range)
 JSON_DEFAULT_TRAITS(tsar::trait::, Loop)
 JSON_DEFAULT_TRAITS(tsar::trait::, Info)
 
