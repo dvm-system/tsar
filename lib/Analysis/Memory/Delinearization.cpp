@@ -287,10 +287,10 @@ void DelinearizationPass::cleanSubscripts(Array &ArrayInfo) {
       continue;
     LLVM_DEBUG(dbgs() << "[DELINEARIZE]: process access ";
                Range.Ptr->print(dbgs()); dbgs() << "\n");
-    assert((!Range.isElement() ||
-      Range.Subscripts.size() == 0 && Range.is(Array::Range::NeedExtraZero) ||
-      ArrayInfo.getNumberOfDims() - LastConstDim <= Range.Subscripts.size())
-      && "Unknown subscripts in right dimensions with constant sizes!");
+    assert((!Range.isElement() || Range.is(Array::Range::NeedExtraZero) ||
+            ArrayInfo.getNumberOfDims() - LastConstDim <=
+                Range.Subscripts.size()) &&
+           "Unknown subscripts in right dimensions with constant sizes!");
     // In some cases zero subscript is dropping out by optimization passes.
     // So, we try to add extra zero subscripts.
     auto ExtraZeroCount = Range.is(Array::Range::NeedExtraZero) ?
