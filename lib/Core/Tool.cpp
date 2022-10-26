@@ -167,7 +167,7 @@ struct Options : private bcl::Uncopyable {
   llvm::cl::opt<bool> NoInline;
   llvm::cl::opt<bool> LoadSources;
   llvm::cl::opt<bool> NoLoadSources;
-  llvm::cl::opt<std::string> AnalysisUse;
+  llvm::cl::list<std::string> AnalysisUse;
   llvm::cl::opt<std::string> ProfileUse;
   llvm::cl::list<std::string> ObjectFilenames;
   llvm::cl::opt<unsigned> LoopParallelThreshold;
@@ -314,7 +314,7 @@ Options::Options() :
   NoLoadSources("fno-load-sources", cl::cat(AnalysisCategory),
     cl::desc("Avoid source-level analysis for an IR-level input")),
   AnalysisUse("fanalysis-use", cl::cat(AnalysisCategory),
-    cl::value_desc("filename"),
+    cl::value_desc("filenames"), cl::ValueRequired, cl::CommaSeparated,
     cl::desc("Use external analysis results to clarify analysis")),
   ProfileUse("fprofile-use", cl::cat(AnalysisCategory),
     cl::value_desc("filename"),

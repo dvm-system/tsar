@@ -154,8 +154,7 @@ class AnalysisReader : public FunctionPass, bcl::Uncopyable {
 public:
   static char ID;
 
-  explicit AnalysisReader(StringRef DataFile = "") :
-    mDataFile(DataFile), FunctionPass(ID) {
+  explicit AnalysisReader(): FunctionPass(ID) {
     initializeAnalysisReaderPass(*PassRegistry::getPassRegistry());
   }
 
@@ -163,7 +162,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
-  std::string mDataFile;
+  bool load(Function &F, unsigned DWLang, StringRef DataFile);
 };
 
 /// Extract a list of analyzed functions from external analysis results.
@@ -334,7 +333,7 @@ template<class TraitTag> void updateAntiFlowDep(
   DITrait.template set<TraitTag>(new trait::DIDependence(F, DistVector));
   LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: set distance to [";
              if (Min) dbgs() << *Min; else dbgs() << "?"; dbgs() << ", ";
-             if (Max) dbgs() << *Max; else dbgs() << "?"; "]\n");
+             if (Max) dbgs() << *Max; else dbgs() << "?"; dbgs() << "]\n");
 }
 
 /// Update description of output dependence in `DITrait` according to
@@ -367,9 +366,7 @@ INITIALIZE_PASS_END(AnalysisReader, "analysis-reader",
 
 char AnalysisReader::ID = 0;
 
-FunctionPass * llvm::createAnalysisReader(StringRef DataFile) {
-  return new AnalysisReader(DataFile);
-}
+FunctionPass * llvm::createAnalysisReader() { return new AnalysisReader; }
 
 void AnalysisReader::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DIMemoryTraitPoolWrapper>();
@@ -380,16 +377,19 @@ bool AnalysisReader::runOnFunction(Function &F) {
   auto DWLang = getLanguage(F);
   if (!DWLang)
     return false;
-  if (mDataFile.empty()) {
-    auto &GO = getAnalysis<GlobalOptionsImmutableWrapper>().getOptions();
-    if (!GO.AnalysisUse.empty())
-      mDataFile = GO.AnalysisUse;
-    else
-      return false;
-  }
-  auto FileOrErr = MemoryBuffer::getFile(mDataFile);
+  auto &GO{getAnalysis<GlobalOptionsImmutableWrapper>().getOptions()};
+  for (auto &File : GO.AnalysisUse)
+    load(F, *DWLang, File);
+  return false;
+}
+
+bool AnalysisReader::load(Function &F, unsigned DWLang, StringRef DataFile) {
+  LLVM_DEBUG(
+      dbgs() << "[ANALYSIS READER]: load external analysis results from '"
+             << DataFile << "'\n");
+  auto FileOrErr = MemoryBuffer::getFile(DataFile);
   if (auto EC = FileOrErr.getError()) {
-    F.getContext().diagnose(DiagnosticInfoPGOProfile(mDataFile.data(),
+    F.getContext().diagnose(DiagnosticInfoPGOProfile(DataFile.data(),
       Twine("unable to open file: ") + EC.message()));
     return false;
   }
@@ -401,9 +401,9 @@ bool AnalysisReader::runOnFunction(Function &F) {
       // Build diagnostic in-place of call to diagnose(), because diagnostic
       // class uses temporary objects available only at construction time.
       F.getContext().diagnose(
-          DiagnosticInfoPGOProfile(mDataFile.data(), D, DS_Note));
+          DiagnosticInfoPGOProfile(DataFile.data(), D, DS_Note));
     }
-    F.getContext().diagnose(DiagnosticInfoPGOProfile(mDataFile.data(),
+    F.getContext().diagnose(DiagnosticInfoPGOProfile(DataFile.data(),
       "unable to parse external analysis results"));
     return false;
   }
@@ -452,7 +452,7 @@ bool AnalysisReader::runOnFunction(Function &F) {
         continue;
       auto *DIExpr = DIEM->getExpression();
       assert(DIVar && DIExpr && "Invalid memory location!");
-      auto Var{buildVariable(*DWLang, *DIEM)};
+      auto Var{buildVariable(DWLang, *DIEM)};
       if (!Var)
         continue;
       LLVM_DEBUG(dbgs() << "[ANALYSIS READER]: update traits for a variable "
@@ -506,5 +506,5 @@ bool AnalysisReader::runOnFunction(Function &F) {
                  DITrait.print(dbgs()); dbgs() << "\n");
     }
   }
-  return false;
+  return true;
 }

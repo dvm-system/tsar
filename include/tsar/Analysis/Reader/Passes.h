@@ -38,10 +38,12 @@ class ModulePass;
 /// Initialize all passes which is necessary to load external analysis results.
 void initializeAnalysisReader(PassRegistry &Registry);
 
-/// Create a reader of external analysis results stored in a specified file.
+/// Create a reader of external analysis results.
 ///
+/// Files with external results must be specified in GlobalOptions::AnalysisUse
+/// option.
 /// If `Filename` is empty `GlobalOptions::AnalysisUse` value is used.
-FunctionPass * createAnalysisReader(llvm::StringRef Filename = "");
+FunctionPass * createAnalysisReader();
 
 /// Initialize a reader of external analysis results.
 void initializeAnalysisReaderPass(PassRegistry &Registry);

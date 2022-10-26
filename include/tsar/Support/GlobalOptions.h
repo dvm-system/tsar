@@ -73,8 +73,8 @@ struct GlobalOptions {
   /// A function is only inlined if the number of memory accesses in the caller
   /// does not exceed this value.
   unsigned MemoryAccessInlineThreshold = 0;
-  /// Pass to external analysis results which is used to clarify analysis.
-  std::string AnalysisUse = "";
+  /// Passes to external analysis results which is used to clarify analysis.
+  std::vector<std::string> AnalysisUse;
   /// Pass to profile which is used to measure possible optimization gain.
   std::string ProfileUse = "";
   /// List of object file names.
