@@ -1064,7 +1064,9 @@ static void insertPragmaData(PragmaToLocations &PragmaLocations,
     }
     return true;
   };
-  for (auto &&[S, Position] : PragmasToInsert) {
+  for (auto &Pair : PragmasToInsert) {
+    auto &&S{Pair.first};
+    auto &&Position{Pair.second};
     auto &ASTCtx{
         cast<ClangTransformationContext>(Position.TfmCtx)->getContext()};
     auto &ParentCtx{ASTCtx.getParentMapContext()};
