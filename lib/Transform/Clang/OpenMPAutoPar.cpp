@@ -500,11 +500,13 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
     const FunctionAnalysis &Provider,
     ClangDependenceAnalyzer &ASTRegionAnalysis, ParallelItem *PI) {
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
-  if (!ASTDepInfo.get<trait::Induction>().get<trait::Induction>().get<AST>()) {
+  if (ASTDepInfo.get<trait::Induction>().size() != 1 ||
+      !ASTDepInfo.get<trait::Induction>().begin()->first.get<AST>()) {
     if (PI)
       PI->finalize();
     return PI;
   }
+  auto BaseInduct{ASTDepInfo.get<trait::Induction>().begin()->first};
   auto *M = DFL.getLoop()->getHeader()->getModule();
   auto LoopID = DFL.getLoop()->getLoopID();
   Optional<bool> Finalize;
@@ -555,16 +557,14 @@ ParallelItem * ClangOpenMPParallelization::exploitParallelism(
         std::move(OmpFor));
   } else {
     auto *OmpFor = cast<OMPForDirective>(PI);
-    OmpFor->getClauses().get<trait::Private>().erase(
-        ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
+    OmpFor->getClauses().get<trait::Private>().erase(BaseInduct);
     if (ASTDepInfo.get<trait::Private>() !=
             OmpFor->getClauses().get<trait::Private>() ||
         ASTDepInfo.get<trait::Reduction>() !=
             OmpFor->getClauses().get<trait::Reduction>() ||
         !(Finalize =
               addOrUpdateOrderedIfNeed(DFL, ASTRegionAnalysis, *OmpFor))) {
-      OmpFor->getClauses().get<trait::Private>().insert(
-          ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
+      OmpFor->getClauses().get<trait::Private>().insert(BaseInduct);
       PI->finalize();
       return PI;
     }

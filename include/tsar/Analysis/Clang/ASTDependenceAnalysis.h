@@ -28,6 +28,7 @@
 
 #include "tsar/Analysis/Clang/VariableCollector.h"
 #include "tsar/Analysis/Memory/DIMemoryTrait.h"
+#include "tsar/Support/Diagnostic.h"
 #include "tsar/Support/GlobalOptions.h"
 #include <bcl/tagged.h>
 #include <bcl/utility.h>
@@ -46,6 +47,17 @@ public:
   using SortedVarListT = VariableCollector::SortedVarListT;
   using SortedVarMultiListT = VariableCollector::SortedVarMultiListT;
 
+private:
+  using DiagnosticId = decltype(tsar::diag::PADDING_BUILTIN_TSAR_DIAGNOSTIC);
+  struct DiagnosticT {
+    DiagnosticT(DiagnosticId Id) : Id(Id) {}
+    SortedVarMultiListT Source;
+    DiagnosticId Id;
+    bool IsPresent = false;
+  };
+  using DiagnosticListT = llvm::SmallVector<DiagnosticT, 8>;
+public:
+
   /// List of dependence distances.
   using DistanceInfo = bcl::tagged_tuple<
       bcl::tagged<trait::DIDependence::DistanceVector, trait::Flow>,
@@ -62,10 +74,12 @@ public:
 
   /// Description of an induction variable and its bounds.
   using InductionInfo =
-      bcl::tagged_tuple<bcl::tagged<VariableT, trait::Induction>,
-                        bcl::tagged<trait::DIInduction::Constant, Begin>,
+      bcl::tagged_tuple<bcl::tagged<trait::DIInduction::Constant, Begin>,
                         bcl::tagged<trait::DIInduction::Constant, End>,
                         bcl::tagged<trait::DIInduction::Constant, Step>>;
+
+  /// List of induction variables.
+  using InductionVarListT = std::map<VariableT, InductionInfo, VariableLess>;
 
   /// List of traits.
   using ASTRegionTraitInfo =
@@ -77,7 +91,7 @@ public:
                         bcl::tagged<SortedVarListT, trait::WriteOccurred>,
                         bcl::tagged<ReductionVarListT, trait::Reduction>,
                         bcl::tagged<SortedVarDistanceT, trait::Dependence>,
-                        bcl::tagged<InductionInfo, trait::Induction>>;
+                        bcl::tagged<InductionVarListT, trait::Induction>>;
 
   ClangDependenceAnalyzer(clang::Stmt *Region, const GlobalOptions &GO,
       clang::DiagnosticsEngine &Diags, DIAliasTree &DIAT,
@@ -87,15 +101,21 @@ public:
       mDIDepSet(DIDepSet), mDIMemoryMatcher(DIMemoryMatcher),
       mASTToClient(ASTToClient) {
     assert(Region && "Source-level region must not be null!");
-    mDependenceInfo.get<trait::Induction>().get<trait::Induction>() = {nullptr,
-                                                                       nullptr};
   }
 
-  bool evaluateDependency();
-  bool evaluateDefUse(SortedVarMultiListT *Errors = nullptr);
+  bool evaluateDependency(bool EmitDiags = true);
+  bool evaluateDefUse(bool EmitDiags = true);
 
   const ASTRegionTraitInfo & getDependenceInfo() const noexcept {
     return mDependenceInfo;
+  }
+
+  const SortedVarMultiListT * hasDiagnostic(DiagnosticId Id) const {
+    auto I{llvm::find_if(mDiagList,
+                         [Id](auto &Diag) { return Diag.Id == Id; })};
+    if (I == mDiagList.end() || !I->IsPresent)
+      return nullptr;
+    return &I->Source;
   }
 
   clang::DiagnosticsEngine &getDiagnostics() const noexcept {
@@ -106,6 +126,14 @@ public:
   const clang::Stmt *getRegion() const noexcept { return mRegion; }
 
 private:
+  unsigned findOrCreateDiagnosticInfo(DiagnosticId Id) {
+    auto I{llvm::find_if(mDiagList,
+                         [Id](auto &Diag) { return Diag.Id == Id; })};
+    if (I != mDiagList.end())
+      return std::distance(mDiagList.begin(), I);
+    mDiagList.emplace_back(Id);
+    return mDiagList.size() - 1;
+  }
   clang::Stmt *mRegion;
   const GlobalOptions &mGlobalOpts;
   clang::DiagnosticsEngine &mDiags;
@@ -118,6 +146,7 @@ private:
   VariableCollector mASTVars;
   llvm::SmallVector<DIAliasTrait *, 32> mInToLocalize;
   llvm::SmallVector<DIAliasTrait *, 32> mOutToLocalize;
+  DiagnosticListT mDiagList;
 };
 }
 #endif//TSAR_CLANG_DEPENDENCE_ANALYZER_H

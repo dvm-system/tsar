@@ -166,23 +166,23 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
   auto &ASTDepInfo = ASTRegionAnalysis.getDependenceInfo();
   if (!ASTDepInfo.get<trait::FirstPrivate>().empty() ||
       !ASTDepInfo.get<trait::LastPrivate>().empty() ||
-      !ASTDepInfo.get<trait::Induction>().get<trait::Induction>().get<AST>()) {
+      ASTDepInfo.get<trait::Induction>().size() != 1 ||
+      !ASTDepInfo.get<trait::Induction>().begin()->first.get<AST>()) {
     if (PI)
       PI->finalize();
     return PI;
   }
+  auto BaseInduct{ASTDepInfo.get<trait::Induction>().begin()->first};
   if (PI) {
     auto DVMHParallel = cast<PragmaParallel>(PI);
     auto &PL = Provider.value<ParallelLoopPass *>()->getParallelLoopInfo();
-    DVMHParallel->getClauses().get<trait::Private>().erase(
-        ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
+    DVMHParallel->getClauses().get<trait::Private>().erase(BaseInduct);
     if (PL[IR.getLoop()].isHostOnly() ||
         ASTDepInfo.get<trait::Private>() !=
             DVMHParallel->getClauses().get<trait::Private>() ||
         ASTDepInfo.get<trait::Reduction>() !=
             DVMHParallel->getClauses().get<trait::Reduction>()) {
-      DVMHParallel->getClauses().get<trait::Private>().insert(
-          ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
+      DVMHParallel->getClauses().get<trait::Private>().insert(BaseInduct);
       PI->finalize();
       return PI;
     }
@@ -196,10 +196,8 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
     std::unique_ptr<PragmaGetActual> DVMHGetActual;
     std::unique_ptr<PragmaRegion> DVMHRegion;
     auto DVMHParallel{std::make_unique<PragmaParallel>()};
-    SortedVarMultiListT NotLocalized;
-    auto Localized = ASTRegionAnalysis.evaluateDefUse(&NotLocalized);
+    auto Localized = ASTRegionAnalysis.evaluateDefUse();
     if (Localized) {
-      assert(NotLocalized.empty() && "All variables must be localized!");
       DVMHRegion = std::make_unique<PragmaRegion>();
       DVMHRegion->finalize();
       DVMHRegion->child_insert(DVMHParallel.get());
@@ -213,7 +211,10 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
             std::piecewise_construct, std::forward_as_tuple(V),
             std::forward_as_tuple());
     } else {
-      for (const auto &V : NotLocalized)
+      auto *NotLocalized{ASTRegionAnalysis.hasDiagnostic(
+          tsar::diag::note_parallel_localize_inout_unable)};
+      assert(NotLocalized && "Source of a diagnostic must be available!");
+      for (const auto &V : *NotLocalized)
         DVMHParallel->getClauses().template get<trait::DirectAccess>().emplace(
             std::piecewise_construct, std::forward_as_tuple(V),
             std::forward_as_tuple());
@@ -299,8 +300,7 @@ ParallelItem *ClangDVMHSMParallelization::exploitParallelism(
       ExitLoc->Exit.push_back(std::move(DVMHGetActual));
   }
   cast<PragmaParallel>(PI)->getClauses().get<trait::Induction>().emplace_back(
-      IR.getLoop()->getLoopID(),
-      ASTDepInfo.get<trait::Induction>().get<trait::Induction>());
+      IR.getLoop()->getLoopID(), BaseInduct);
    auto &PerfectInfo =
       Provider.value<ClangPerfectLoopPass *>()->getPerfectLoopInfo();
   if (!PI->isFinal() &&

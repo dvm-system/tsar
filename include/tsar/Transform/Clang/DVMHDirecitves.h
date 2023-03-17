@@ -65,7 +65,11 @@ using ShadowVarListT =
                                           trait::DIDependence::DistanceVector>,
                               bcl::tagged<bool, Corner>>,
              ClangDependenceAnalyzer::VariableLess>;
-using InductionInfo = ClangDependenceAnalyzer::InductionInfo;
+using InductionInfo =
+    bcl::tagged_tuple<bcl::tagged<VariableT, trait::Induction>,
+                      bcl::tagged<trait::DIInduction::Constant, Begin>,
+                      bcl::tagged<trait::DIInduction::Constant, End>,
+                      bcl::tagged<trait::DIInduction::Constant, Step>>;
 
 class Template {
 public:

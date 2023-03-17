@@ -352,32 +352,41 @@ void APCLoopInfoBasePass::runOnLoop(Loop &L, apc::LoopGraph &APCLoop) {
     ClangDependenceAnalyzer RegionAnalysis(
         const_cast<clang::ForStmt *>(ForStmt), *mGlobalOpts, Diags, DIAT,
         DIDepSet, *DIMemoryMatcher, ASTToClient);
-    if (RegionAnalysis.evaluateDependency()) {
+    if (RegionAnalysis.evaluateDependency() &&
+        RegionAnalysis.getDependenceInfo().get<trait::Induction>().size() ==
+            1) {
       auto &DepInfo{RegionAnalysis.getDependenceInfo()};
-      APCLoop.loopSymbol = DepInfo.get<trait::Induction>()
-                               .get<trait::Induction>()
-                               .get<AST>()
-                               ->getName()
-                               .str();
+      dvmh::InductionInfo BaseInduct;
+      BaseInduct.get<trait::Induction>() =
+          DepInfo.get<trait::Induction>().begin()->first;
+      BaseInduct.get<tsar::Begin>() =
+          DepInfo.get<trait::Induction>().begin()->second.get<tsar::Begin>();
+      BaseInduct.get<tsar::End>() =
+          DepInfo.get<trait::Induction>().begin()->second.get<tsar::End>();
+      BaseInduct.get<tsar::Step>() =
+          DepInfo.get<trait::Induction>().begin()->second.get<tsar::Step>();
+      APCLoop.loopSymbol =
+          BaseInduct.get<trait::Induction>().get<AST>()->getName().str();
       APCLoop.hasUnknownScalarDep = false;
       APCLoop.hasUnknownArrayDep = false;
-      auto *S{new apc::LoopStatement{F, LoopID, &APCLoop,
-                                     DepInfo.get<trait::Induction>()}};
+      auto *S{new apc::LoopStatement{F, LoopID, &APCLoop, BaseInduct}};
       APCLoop.loop = S;
       mAPCContext->addStatement(S);
       S->getTraits().get<trait::Private>() = DepInfo.get<trait::Private>();
       S->getTraits().get<trait::Local>() = DepInfo.get<trait::Local>();
       S->getTraits().get<trait::Reduction>() = DepInfo.get<trait::Reduction>();
-      dvmh::SortedVarMultiListT NotLocalized;
-      auto Localized{RegionAnalysis.evaluateDefUse(&NotLocalized)};
+      auto Localized{RegionAnalysis.evaluateDefUse()};
       S->setIsHostOnly(!Localized || ParallelInfoItr->second.isHostOnly());
       S->getTraits().get<trait::WriteOccurred>() =
           DepInfo.get<trait::WriteOccurred>();
       S->getTraits().get<trait::ReadOccurred>() =
           DepInfo.get<trait::ReadOccurred>();
       if (!Localized) {
-        S->getTraits().get<trait::WriteOccurred>().insert(NotLocalized.begin(),
-                                                          NotLocalized.end());
+        auto *NotLocalized{RegionAnalysis.hasDiagnostic(
+            tsar::diag::note_parallel_localize_inout_unable)};
+        assert(NotLocalized && "Source of a diagnostic must be available!");
+        S->getTraits().get<trait::WriteOccurred>().insert(NotLocalized->begin(),
+                                                          NotLocalized->end());
         S->getTraits().get<trait::ReadOccurred>() =
             S->getTraits().get<trait::WriteOccurred>();
       }
