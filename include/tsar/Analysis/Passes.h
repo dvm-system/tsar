@@ -117,5 +117,23 @@ ModulePass *createAnalysisCloseConnectionPass(bool ActiveOnly = false);
 /// Close connection with server (it should be run on client). Client will
 /// be blocked until server confirms that connection can be closed.
 ModulePass *createAnalysisCloseConnectionPass(const void * ServerID);
+
+/// Initialize a pass to build program dependency graph.
+void initializePDGPassPass(PassRegistry &Registry);
+
+/// Create a pass to build program dependency graph.
+FunctionPass *createPDGPass();
+
+/// Initialize a pass to print program dependency graph to 'dot' file.
+void initializePDGPrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print program dependency to 'dot' file.
+FunctionPass *createPDGPrinter();
+
+/// Initialize a pass to display program dependency graph.
+void initializePDGViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display program dependency graph.
+FunctionPass *createPDGViewer();
 }
 #endif//TSAR_ANALYSIS_PASSES_H

@@ -149,5 +149,23 @@ void initializeClangIncludeTreeOnlyViewerPass(PassRegistry &Registry);
 /// Create a pass to display source file tree (filenames instead of
 /// full paths).
 ModulePass *createClangIncludeTreeOnlyViewer();
+
+/// Initialize a pass to build source control flow graph.
+void initializeClangSourceCFGPassPass(PassRegistry &Registry);
+
+/// Create a pass to build source control flow graph.
+FunctionPass *createClangSourceCFGPass();
+
+/// Initialize a pass to print source control flow graph to 'dot' file.
+void initializeClangSourceCFGPrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print source control flow graph to 'dot' file.
+FunctionPass *createClangSourceCFGPrinter();
+
+/// Initialize a pass to display source control flow graph.
+void initializeClangSourceCFGViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display source control flow graph.
+FunctionPass *createClangSourceCFGViewer();
 }
 #endif//TSAR_CLANG_ANALYSIS_PASSES_H
