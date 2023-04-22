@@ -53,6 +53,17 @@ class AliasTree;
 class DefUseSet;
 template<class GraphType> class SpanningTreeRelation;
 
+/// Finds the debug info intrinsics describing a value regardless whether it is
+/// a constant or not.
+void findAllDbgUsers(
+    llvm::SmallVectorImpl<llvm::DbgVariableIntrinsic *> &DbgUsers,
+    llvm::Value *V);
+
+/// Finds the debug info intrinsics describing a constant.
+void findConstDbgUsers(
+    llvm::SmallVectorImpl<llvm::DbgVariableIntrinsic *> &DbgUsers,
+    llvm::Constant *C);
+
 /// This function strips off any GEP address adjustments and pointer casts from
 /// the specified value while it is possible or until the object with attached
 /// metadata describing a value will be found. The second returned value is

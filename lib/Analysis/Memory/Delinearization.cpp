@@ -138,12 +138,12 @@ std::tuple<Value *, Value *, bool> GetUnderlyingArray(Value *Ptr,
   auto BasePtrInfo = GetUnderlyingObjectWithMetadata(Ptr, DL);
   if (!BasePtrInfo.second && isa<LoadInst>(BasePtrInfo.first)) {
     Ptr = cast<LoadInst>(BasePtrInfo.first)->getPointerOperand();
-  } else if (!isa<AllocaInst>(BasePtrInfo.first) &&
-             !isa<GlobalValue>(BasePtrInfo.first) &&
-             !isa<Constant>(BasePtrInfo.first)) {
+  } else if (isa<ConstantExpr>(BasePtrInfo.first) ||
+             !isa<AllocaInst>(BasePtrInfo.first) &&
+                 !isa<Constant>(BasePtrInfo.first)) {
     Ptr = BasePtrInfo.first;
     SmallVector<DbgVariableIntrinsic *, 4> DbgUsers;
-    findDbgUsers(DbgUsers, BasePtrInfo.first);
+    findAllDbgUsers(DbgUsers, BasePtrInfo.first);
     auto CurrFuncDbgItr = find_if(DbgUsers, [](auto *U) {
       auto DbgLoc = U->getDebugLoc();
       return DbgLoc && !DbgLoc.getInlinedAt();

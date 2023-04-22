@@ -40,6 +40,34 @@
 using namespace llvm;
 using namespace tsar;
 
+void tsar::findConstDbgUsers(
+    SmallVectorImpl<DbgVariableIntrinsic *> &DbgUsers, Constant *C) {
+  assert(C && "Value must not be null!");
+  if (!C->isUsedByMetadata())
+    return;
+  if (auto *CMD = ConstantAsMetadata::getIfExists(C)) {
+    if (auto *MDV = MetadataAsValue::getIfExists(C->getContext(), CMD))
+      for (User *U : MDV->users())
+        if (auto *DII{dyn_cast<DbgVariableIntrinsic>(U)})
+          DbgUsers.push_back(DII);
+    SmallPtrSet<DbgVariableIntrinsic *, 4> EncounteredDbgValues;
+    for (Metadata *AL : CMD->getAllArgListUsers())
+      if (auto *MDV = MetadataAsValue::getIfExists(C->getContext(), AL))
+        for (User *U : MDV->users())
+          if (DbgVariableIntrinsic *DII = dyn_cast<DbgVariableIntrinsic>(U))
+            if (EncounteredDbgValues.insert(DII).second)
+              DbgUsers.push_back(DII);
+  }
+}
+
+void tsar::findAllDbgUsers(SmallVectorImpl<DbgVariableIntrinsic *> &DbgUsers,
+                     Value *V) {
+  if (auto *C{dyn_cast<Constant>(V)})
+    findConstDbgUsers(DbgUsers, C);
+  else
+    findDbgUsers(DbgUsers, V);
+}
+
 namespace {
 void findConstDbgValues(
     SmallVectorImpl<DbgValueInst *> &DbgValues, Constant *C) {
