@@ -714,16 +714,58 @@ const SCEV *evaluateAtIteration(const SCEVAddRecExpr *ARE, const SCEV *It,
   return S;
 }
 
-Optional<int64_t> compareSCEVs(const SCEV *LHS,
-                               const SCEV *RHS,
+Optional<int64_t> compareSCEVs(const SCEV *LHS, const SCEV *RHS,
                                ScalarEvolution *SE) {
   assert(SE && "ScalarEvolution must be specified!");
   assert(LHS && RHS && "SCEV must be specified!");
   TypeQueue TQLHS, TQRHS;
   auto InnerLHS = getTypeQueue(TQLHS, LHS);
   auto InnerRHS = getTypeQueue(TQRHS, RHS);
-  if (TQLHS != TQRHS)
+  if (TQLHS != TQRHS) {
+    // For cases like LHS = { zext(%v) - Const1 }, RHS = { zext(%v - Const2) }
+    // TODO (yukki.lapenko@gmail.com): can we extend this check for sext?
+    if (isa<SCEVZeroExtendExpr>(LHS) && isa<SCEVAddExpr>(RHS) ||
+        isa<SCEVAddExpr>(LHS) && isa<SCEVZeroExtendExpr>(RHS)) {
+      int SwapMult = 1;
+      auto First{LHS}, Second{RHS};
+      // Let the first SCEV be of kind { zext(%v) - Const1 } and the second
+      // be of kind { zext(%v - Const2) }.
+      if (isa<SCEVZeroExtendExpr>(LHS) && isa<SCEVAddExpr>(RHS)) {
+        std::swap(First, Second);
+        SwapMult = -1;
+      }
+      auto *FirstAdd = cast<SCEVAddExpr>(First);
+      auto *FirstOp0 = FirstAdd->getOperand(0);
+      auto *FirstOp1 = FirstAdd->getOperand(1);
+      // Let the first operand always be a non-constant value.
+      if (isa<SCEVConstant>(FirstOp0))
+        std::swap(FirstOp0, FirstOp1);
+      auto *FirstCast = dyn_cast<SCEVZeroExtendExpr>(FirstOp0);
+      if (!FirstCast)
+        return None;
+      auto *FirstVar = FirstCast->getOperand();
+      if (!isa<SCEVUnknown>(FirstVar))
+        return None;
+      auto *SecondCast = dyn_cast<SCEVZeroExtendExpr>(Second);
+      if (!SecondCast || !isa<SCEVAddExpr>(SecondCast->getOperand()))
+        return None;
+      auto *SecondAdd = cast<SCEVAddExpr>(SecondCast->getOperand());
+      auto *SecondOp0 = SecondAdd->getOperand(0);
+      auto *SecondOp1 = SecondAdd->getOperand(1);
+      if (isa<SCEVConstant>(SecondOp0))
+        std::swap(SecondOp0, SecondOp1);
+      if (!isa<SCEVUnknown>(SecondOp0))
+        return None;
+      auto FirstVarVal = cast<SCEVUnknown>(FirstVar)->getValue();
+      auto FirstConst = cast<SCEVConstant>(FirstOp1)->getAPInt().getSExtValue();
+      auto SecondVarVal = cast<SCEVUnknown>(SecondOp0)->getValue();
+      auto SecondConst =
+          cast<SCEVConstant>(SecondOp1)->getAPInt().getSExtValue();
+      if (FirstVarVal == SecondVarVal)
+        return (FirstConst - SecondConst) * SwapMult;
+    }
     return None;
+  }
   if (auto Const = llvm::dyn_cast<llvm::SCEVConstant>(
       SE->getMinusSCEV(InnerLHS, InnerRHS)))
     return Const->getAPInt().getSExtValue();
