@@ -47,6 +47,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/InstIterator.h>
+#include <llvm/IR/Operator.h>
 #include <llvm/Support/Debug.h>
 #include <functional>
 
@@ -276,8 +277,7 @@ std::pair<MemoryLocationRange, bool> aggregate(
   auto ArrayPtr = LocInfo.first;
   if (!ArrayPtr || !ArrayPtr->isDelinearized() || !LocInfo.second->isValid()) {
     LLVM_DEBUG(dbgs() << "[AGGREGATE] Failed to delinearize location.\n");
-    ResLoc.Kind = LocKind::Default;
-    return std::make_pair(ResLoc, true);
+    return std::make_pair(Loc, true);
   }
   LLVM_DEBUG(dbgs() << "[AGGREGATE] Array info: " << *ArrayPtr->getBase() <<
       ", IsAddress: " << ArrayPtr->isAddressOfVariable() << ".\n");
@@ -292,7 +292,6 @@ std::pair<MemoryLocationRange, bool> aggregate(
   auto ArraySizeInfo = arraySize(ArrayType);
   if (ArraySizeInfo == std::make_tuple(0, 1, ArrayType) &&
       ArrayPtr->getNumberOfDims() != 1) {
-    LLVM_DEBUG(dbgs() << "[AGGREGATE] Failed to get array size.\n");
     ResLoc.Kind = LocKind::NonCollapsable;
     return std::make_pair(ResLoc, true);
   }
@@ -550,7 +549,11 @@ std::pair<MemoryLocationRange, bool> aggregate(
       ResLoc.DimList.push_back(DimInfo);
       ResLoc.Kind = LocKind::Collapsed;
     } else {
-      break;
+      DimInfo.Start = DimInfo.End = SCEV;
+      DimInfo.Step = SE->getOne(Int64Ty);
+      ResLoc.DimList.push_back(DimInfo);
+      ResLoc.Kind = LocKind::Collapsed;
+      ++ConstMatchCount;
     }
     ++DimensionN;
   }
@@ -615,7 +618,7 @@ public:
         auto AR = aliasRelation(this->mAA, this->mDL, mLoc, ALoc);
         if (AR.template is_any<trait::CoverAlias, trait::CoincideAlias>()) {
           MemoryLocationRange Loc(ALoc);
-          if (mEM->getParent() == &EM)
+          if (mEM->isDescendantOf(EM) && mEM != &EM)
             Loc.Kind |= MemoryLocationRange::LocKind::Auxiliary;
           addMust(Loc);
         } else if (AR.template is<trait::ContainedAlias>()) {
@@ -644,14 +647,14 @@ public:
           } else {
             Range = MemoryLocationRange{ALoc.Ptr, 0, mLoc.Size , ALoc.AATags};
           }
-          if (mEM->getParent() == &EM)
+          if (mEM->isDescendantOf(EM) && mEM != &EM)
             Range.Kind |= MemoryLocationRange::LocKind::Auxiliary;
           if (this->mDU.hasDef(Range))
             continue;
           addMust(Range);
         } else if (!AR.template is<trait::NoAlias>()) {
           MemoryLocationRange Loc(ALoc);
-          if (mEM->getParent() == &EM)
+          if (mEM->isDescendantOf(EM) && mEM != &EM)
             Loc.Kind |= MemoryLocationRange::LocKind::Auxiliary;
           addMay(Loc);
         }
@@ -801,8 +804,19 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       if (isMemoryMarkerIntrinsic(II->getIntrinsicID()) ||
           isDbgInfoIntrinsic(II->getIntrinsicID()))
         continue;
-    if (I.getType() && I.getType()->isPointerTy())
-      DU->addAddressAccess(&I);
+    if (I.getType() && I.getType()->isPointerTy()) {
+      if (isa<GEPOperator>(I)) {
+        auto IsOnlyGEPUsers{true};
+        for_each_user_insts(I,
+                            [&IsOnlyGEPUsers](auto *U) {
+                              IsOnlyGEPUsers &= isa<GEPOperator>(U);
+                            });
+        if (!IsOnlyGEPUsers)
+          DU->addAddressAccess(&I);
+      } else {
+        DU->addAddressAccess(&I);
+      }
+    }
     auto isAddressAccess = [&F](const Value *V) {
       if (const ConstantPointerNull *CPN = dyn_cast<ConstantPointerNull>(V)) {
         if (!NullPointerIsDefined(F, CPN->getType()->getAddressSpace()))
@@ -817,6 +831,13 @@ void DataFlowTraits<ReachDFFwk*>::initialize(
       } else if (auto *GV{dyn_cast<GlobalValue>(V)};
                  GV && GV->hasGlobalUnnamedAddr()) {
         return false;
+      } else if (isa<GEPOperator>(V)) {
+        auto IsOnlyGEPUsers{true};
+        for_each_user_insts(const_cast<Value &>(*V),
+                            [&IsOnlyGEPUsers](auto *U) {
+                              IsOnlyGEPUsers &= isa<GEPOperator>(U);
+                            });
+        return !IsOnlyGEPUsers;
       }
       return true;
     };
@@ -1135,11 +1156,15 @@ void ReachDFFwk::collapse(DFRegion *R) {
                                          const LocationSet &LS) -> bool {
     bool AreAllCollapsedOrAuxiliary = true;
     bool HasCollapsed = false;
+    bool HasOtherGV = false;
     auto *GV{dyn_cast<GlobalValue>(getUnderlyingObject(Loc.Ptr, 0))};
     for (auto &OtherLoc : LS) {
+      if (&Loc == &OtherLoc)
+        continue;
       auto *OtherGV{dyn_cast<GlobalValue>(
           getUnderlyingObject(OtherLoc.Ptr, 0))};
       if (GV == OtherGV) {
+        HasOtherGV = true;
         if ((OtherLoc.Kind & MemoryLocationRange::LocKind::Collapsed) &&
             !(OtherLoc.Kind & MemoryLocationRange::LocKind::Auxiliary))
           HasCollapsed = true;
@@ -1150,7 +1175,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
         }
       }
     }
-    if (AreAllCollapsedOrAuxiliary && HasCollapsed)
+    if (AreAllCollapsedOrAuxiliary && HasCollapsed || !HasOtherGV)
       return true;
     return false;
   };
@@ -1228,7 +1253,9 @@ void ReachDFFwk::collapse(DFRegion *R) {
             }
           }
         }
-        if (AreAllCollapsed && SameUnderlyingObjCount > 1)
+        if (AreAllCollapsed && SameUnderlyingObjCount > 1 ||
+            Loc.Kind == MemoryLocationRange::LocKind::Auxiliary &&
+            SameUnderlyingObjCount == 1 && AreAllCollapsed)
           SkipExcessUse = true;
       } else if (Loc.Kind & MemoryLocationRange::LocKind::Auxiliary) {
         SkipExcessUse = MaySkipAuxiliaryLocation(Loc, NewUses);
