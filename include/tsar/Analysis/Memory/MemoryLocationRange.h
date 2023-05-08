@@ -224,8 +224,10 @@ struct MemoryLocationRange {
       return *this;
     assert(UpperBound.hasValue() && "UpperBound must have a value!");
     auto FullSize = UpperBound.getValue();;
-    for (std::size_t I = 1; I < DimList.size(); ++I)
+    for (std::size_t I = 0; I < DimList.size(); ++I)
       FullSize *= DimList[I].DimSize;
+    if (FullSize == 0)
+      return MemoryLocationRange(Ptr, 0, UnknownSize, AATags);
     return MemoryLocationRange(Ptr, 0, LocationSize(FullSize), AATags);
   }
 };
