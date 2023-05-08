@@ -36,7 +36,7 @@ using namespace tsar;
 using namespace llvm;
 
 #undef DEBUG_TYPE
-#define DEBUG_TYPE "def-mem"
+#define DEBUG_TYPE "inter-mem"
 
 namespace {
 typedef int64_t ColumnT;
@@ -253,7 +253,7 @@ void delinearize(const MemoryLocationRange &From, MemoryLocationRange &What) {
   What.LowerBound = 0;
   What.UpperBound = ElemSize;
   What.DimList = std::move(DimList);
-  What.Kind = LocKind::Collapsed | (What.Kind & LocKind::Hint);
+  What.Kind = LocKind::Collapsed | (What.Kind & LocKind::Hint) | (What.Kind & LocKind::Auxiliary);
   What.SE = SE;
   What.AM = From.AM;
 }
@@ -355,14 +355,28 @@ struct IntersectVarInfo {
 /// returns llvm::None.
 llvm::Optional<std::pair<Value *, int64_t>>
 parseBoundExpression(const llvm::SCEV *S) {
-  if (auto *Unknown = dyn_cast<SCEVUnknown>(S))
-    return std::make_pair(Unknown->getValue(), int64_t(0));
+  auto GetInnerSCEV = [](const SCEV *S) -> const SCEV* {
+    while (auto Cast{dyn_cast<SCEVCastExpr>(S)})
+      S = Cast->getOperand();
+    return S;
+  };
+  if (!isa<SCEVNAryExpr>(S)) {
+    if (isa<SCEVSignExtendExpr>(S) || isa<SCEVZeroExtendExpr>(S)) {
+      return parseBoundExpression(GetInnerSCEV(S));
+    }
+    if (auto *Unknown = dyn_cast<SCEVUnknown>(S))
+      return std::make_pair(Unknown->getValue(), int64_t(0));
+  }
   auto *NAry = dyn_cast<SCEVNAryExpr>(S);
   if (!NAry || NAry->getSCEVType() != llvm::SCEVTypes::scAddExpr ||
       NAry->getNumOperands() != 2)
     return llvm::None;
   auto *S1 = NAry->getOperand(0);
   auto *S2 = NAry->getOperand(1);
+  if (isa<SCEVSignExtendExpr>(S1) || isa<SCEVZeroExtendExpr>(S1))
+    S1 = GetInnerSCEV(S1);
+  if (isa<SCEVSignExtendExpr>(S2) || isa<SCEVZeroExtendExpr>(S2))
+    S2 = GetInnerSCEV(S2);
   auto T1 = static_cast<SCEVTypes>(S1->getSCEVType());
   auto T2 = static_cast<SCEVTypes>(S2->getSCEVType());
   int64_t Constant = 0;
@@ -378,6 +392,13 @@ parseBoundExpression(const llvm::SCEV *S) {
   }
   assert(Variable && "Value must not be nullptr!");
   return std::make_pair(Variable, Constant);
+}
+
+void shiftBounds(AssumptionBounds &AB, int64_t Offset) {
+  if (AB.Lower)
+    AB.Lower = *AB.Lower + Offset;
+  if (AB.Upper)
+    AB.Upper = *AB.Upper + Offset;
 }
 
 inline std::function<Dimension& (llvm::SmallVectorImpl<MemoryLocationRange> *)>
@@ -485,8 +506,10 @@ IntersectionResult processOneStartOtherEndConst(
   auto BNItr = AM->find(BN->first);
   if (BPItr == AM->end() || BNItr == AM->end())
     return Info.UnknownIntersection;
-  auto &BoundsP = BPItr->second;
-  auto &BoundsN = BNItr->second;
+  auto BoundsP = BPItr->second;
+  auto BoundsN = BNItr->second;
+  shiftBounds(BoundsP, BP->second);
+  shiftBounds(BoundsN, BN->second);
   auto MInt = cast<SCEVConstant>(M)->getAPInt().getSExtValue();
   auto QInt = cast<SCEVConstant>(Q)->getAPInt().getSExtValue();
   if (!BoundsN.Lower || !BoundsN.Upper || !BoundsP.Lower || !BoundsP.Upper)
@@ -633,8 +656,10 @@ IntersectionResult processBothStartConst(const MemoryLocationRange &LeftRange,
       auto BQItr = AM->find(BQ->first);
       if (BNItr == AM->end() || BQItr == AM->end())
         return Info.UnknownIntersection;
-      auto &BoundsN = BNItr->second;
-      auto &BoundsQ = BQItr->second;
+      auto BoundsN = BNItr->second;
+      auto BoundsQ = BQItr->second;
+      shiftBounds(BoundsN, BN->second);
+      shiftBounds(BoundsQ, BN->second);
       if (BoundsN.Upper && PInt > *BoundsN.Upper) {
         return Info.EmptyIntersection;
       } else if (BoundsN.Lower && PInt <= *BoundsN.Lower) {
@@ -729,8 +754,10 @@ IntersectionResult processBothEndConst(const MemoryLocationRange &LeftRange,
       auto BPItr = AM->find(BP->first);
       if (BMItr == AM->end() || BPItr == AM->end())
         return Info.UnknownIntersection;
-      auto &BoundsM = BMItr->second;
-      auto &BoundsP = BPItr->second;
+      auto BoundsM = BMItr->second;
+      auto BoundsP = BPItr->second;
+      shiftBounds(BoundsM, BM->second);
+      shiftBounds(BoundsP, BP->second);
       if (BoundsM.Lower && QInt < *BoundsM.Lower) {
         return Info.EmptyIntersection;
       } else if (BoundsM.Upper && QInt >= *BoundsM.Upper) {
@@ -795,7 +822,8 @@ IntersectionResult processOneConstOtherSemiconst(
     auto BQItr = AM->find(BQ->first);
     if (BQItr == AM->end())
       return Info.UnknownIntersection;
-    auto &BoundsQ = BQItr->second;
+    auto BoundsQ = BQItr->second;
+    shiftBounds(BoundsQ, BQ->second);
     if (BoundsQ.Lower && NInt < *BoundsQ.Lower) {
       // [max(m, p), n]
       Intersection.Start = MInt > PInt ? M : P;
@@ -858,7 +886,8 @@ IntersectionResult processOneConstOtherSemiconst(
     auto BPItr = AM->find(BP->first);
     if (BPItr == AM->end())
       return Info.UnknownIntersection;
-    auto &BoundsP = BPItr->second;
+    auto BoundsP = BPItr->second;
+    shiftBounds(BoundsP, BP->second);
     if (BoundsP.Upper && MInt > *BoundsP.Upper) {
       // [m, min(n, q)]
       Intersection.Start = M;
@@ -961,8 +990,10 @@ IntersectionResult processOneVariableOtherSemiconst(
   auto BNItr = AM->find(BN->first);
   if (BMItr == AM->end() || BNItr == AM->end())
     return Info.UnknownIntersection;
-  auto &BoundsM = BMItr->second;
-  auto &BoundsN = BNItr->second;
+  auto BoundsM = BMItr->second;
+  auto BoundsN = BNItr->second;
+  shiftBounds(BoundsM, BM->second);
+  shiftBounds(BoundsN, BN->second);
   if (isa<SCEVConstant>(P)) {
     auto PInt = cast<SCEVConstant>(P)->getAPInt().getSExtValue();
     auto BQ = parseBoundExpression(Q);
@@ -971,7 +1002,8 @@ IntersectionResult processOneVariableOtherSemiconst(
     auto BQItr = AM->find(BQ->first);
     if (BQItr == AM->end())
       return Info.UnknownIntersection;
-    auto &BoundsQ = BQItr->second;
+    auto BoundsQ = BQItr->second;
+    shiftBounds(BoundsQ, BQ->second);
     if (BoundsN.Upper && *BoundsN.Upper < PInt ||
         BoundsQ.Upper && BoundsM.Lower && *BoundsQ.Upper < *BoundsM.Lower ||
         CmpMQ && *CmpMQ > 0)
@@ -1046,6 +1078,21 @@ IntersectionResult processOneVariableOtherSemiconst(
           Dim2.Start = addOneToSCEV(N, SE);
           Dim2.End = Q;
         }
+      } else if (CmpNQ && *CmpNQ <= 0) {
+        Intersection.Start = M;
+        Intersection.End = N;
+        if (SC) {
+          // [p, M-1]
+          auto &Dim1 = Grow(SC);
+          Dim1.Start = P;
+          Dim1.End = subtractOneFromSCEV(M, SE);
+          if (*CmpNQ < 0) {
+            // [N+1, Q]
+            auto &Dim2 = Grow(SC);
+            Dim2.Start = addOneToSCEV(N, SE);
+            Dim2.End = Q;
+          }
+        }
       } else {
         return Info.UnknownIntersection;
       }
@@ -1060,7 +1107,8 @@ IntersectionResult processOneVariableOtherSemiconst(
     auto BPItr = AM->find(BP->first);
     if (BPItr == AM->end())
       return Info.UnknownIntersection;
-    auto &BoundsP = BPItr->second;
+    auto BoundsP = BPItr->second;
+    shiftBounds(BoundsP, BP->second);
     if (BoundsM.Lower && *BoundsM.Lower > QInt ||
         BoundsP.Lower && BoundsN.Upper && *BoundsP.Lower > *BoundsN.Upper ||
         CmpNP && *CmpNP < 0)
@@ -1175,8 +1223,10 @@ IntersectionResult processOneConstOtherVariable(
   auto BQItr = AM->find(BQ->first);
   if (BPItr == AM->end() || BQItr == AM->end())
     return Info.UnknownIntersection;
-  auto &BoundsP = BPItr->second;
-  auto &BoundsQ = BQItr->second;
+  auto BoundsP = BPItr->second;
+  auto BoundsQ = BQItr->second;
+  shiftBounds(BoundsP, BP->second);
+  shiftBounds(BoundsQ, BQ->second);
   auto MInt = cast<SCEVConstant>(M)->getAPInt().getSExtValue();
   auto NInt = cast<SCEVConstant>(N)->getAPInt().getSExtValue();
   if (BoundsQ.Upper && *BoundsQ.Upper < MInt ||
@@ -1364,8 +1414,9 @@ llvm::Optional<MemoryLocationRange> intersect(
       LHS.DimList == RHS.DimList)
     return LHS;
   MemoryLocationRange Int(LHS);
-  assert(LHS.SE && RHS.SE && LHS.SE == RHS.SE &&
-         "ScalarEvolution must be specified!");
+  assert(LHS.SE && RHS.SE && "ScalarEvolution must be specified!");
+  assert(LHS.SE == RHS.SE
+         && "ScalarEvolution must be common for memory locations!");
   auto SE = LHS.SE;
   for (std::size_t I = 0; I < LHS.DimList.size(); ++I) {
     auto &Left = LHS.DimList[I];
