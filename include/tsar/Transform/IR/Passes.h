@@ -29,6 +29,7 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/StringRef.h>
+#include <llvm/Analysis/LoopPass.h>
 
 namespace llvm {
 class Pass;
@@ -106,5 +107,12 @@ void initializePointerScalarizerPassPass(PassRegistry &Registry);
 
 /// Create a pass which attempts to promote pointer values to registers.
 FunctionPass *createPointerScalarizerPass();
+
+/// Initialize a pass which attempts to promote array values to registers.
+void initializeArrayScalarizerPassPass(PassRegistry &Registry);
+
+/// Create a pass which attempts to promote array values to registers.
+LoopPass *createArrayScalarizerPass();
 }
+
 #endif//TSAR_IR_TRANSFORM_PASSES_H
