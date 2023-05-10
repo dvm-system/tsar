@@ -56,12 +56,30 @@ namespace {
 
 const int MAX_ARRAY_SIZE = 5;
 
+/*
+
+    %addr = gep ...
+
+    %load = load %addr
+    %op = add %load, %expr
+
+    store %op, %addr
+
+*/
+struct ReductionInfo {
+    Value *expr;
+
+    GetElementPtrInst *addr;    // %addr = gep ...
+    LoadInst *load;             // %load = load %addr
+    BinaryOperator *op;               // %op = add %load, %expr
+    StoreInst *store;           // store %op, %addr
+};
+
 
 class ArrayScalarizerPass : public LoopPass, private bcl::Uncopyable {
 public:
     static char ID;
     std::map<AllocaInst*, int> smallArrays;
-
 
     ArrayScalarizerPass() : LoopPass(ID) {
         initializeArrayScalarizerPassPass(*PassRegistry::getPassRegistry());
@@ -74,9 +92,9 @@ public:
 
     std::vector<Value *> insertPrologue(Loop *L, AllocaInst *AI);
     void insertEpilogue(Loop *L, AllocaInst *AI, const std::vector<Value *> &values);
-    void insertEpilogeToBB(Loop *L, AllocaInst *AI, BasicBlock *BB, const std::vector<Value *> &values);
+    void insertEpilogueToBB(Loop *L, AllocaInst *AI, BasicBlock *BB, const std::vector<Value *> &values);
 
-    void replaceReductionWithSwitch(Loop *L, AllocaInst *AI, StoreInst *SI, const std::vector<Value *> &values);
+    void replaceReductionWithSwitch(Loop *L, AllocaInst *AI, ReductionInfo info, const std::vector<Value *> &values);
 };
 
 char ArrayScalarizerPass::ID = 0;
@@ -108,26 +126,24 @@ llvm::Type* getAllocatedArrayType(AllocaInst *AI) {
     return nullptr;
 }
 
+template<typename T>
+AllocaInst* get(Instruction *instr) {
+    if (auto *I = dyn_cast<T>(instr)) {
+        if (auto *AI = dyn_cast<AllocaInst>(I->getPointerOperand())) {
+            return AI;
+        }
+
+        if (auto *GEP = dyn_cast<GetElementPtrInst>(I->getPointerOperand())) {
+            return dyn_cast<AllocaInst>(GEP->getPointerOperand());
+        }
+    }
+
+    return nullptr;
+}
+
 AllocaInst* getAllocaFromLoadOrStore(Instruction *instr) {
-    if (auto *LI = dyn_cast<LoadInst>(instr)) {
-        if (auto *AI = dyn_cast<AllocaInst>(LI->getPointerOperand())) {
-            return AI;
-        }
-
-        if (auto *GEP = dyn_cast<GetElementPtrInst>(LI->getPointerOperand())) {
-            return dyn_cast<AllocaInst>(GEP->getPointerOperand());
-        }
-    }
-    
-    if (auto *SI = dyn_cast<StoreInst>(instr)) {
-        if (auto *AI = dyn_cast<AllocaInst>(SI->getPointerOperand())) {
-            return AI;
-        }
-
-        if (auto *GEP = dyn_cast<GetElementPtrInst>(SI->getPointerOperand())) {
-            return dyn_cast<AllocaInst>(GEP->getPointerOperand());
-        }
-    }
+    if (auto *res = get<LoadInst>(instr)) { return res; }
+    if (auto *res = get<StoreInst>(instr)) { return res; }
 
     return nullptr;
 }
@@ -205,24 +221,33 @@ bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
 }
 
 
-bool isReduction(StoreInst *SI) {
-    auto *GEP = dyn_cast<GetElementPtrInst>(SI->getPointerOperand());
-    if (!GEP) {
+bool getReductionInfo(StoreInst *SI, ReductionInfo &info) {
+    info.store = SI;
+
+    info.addr = dyn_cast<GetElementPtrInst>(SI->getPointerOperand());
+    if (!info.addr) {
         return false;
     }
 
-    auto *AddI = dyn_cast<AddOperator>(SI->getOperand(0));
-    if (!AddI) {
+    info.op = dyn_cast<BinaryOperator>(SI->getOperand(0));
+    if (!info.op) {
         return false;
     }
 
-    auto *LoadI = dyn_cast<LoadInst>(AddI->getOperand(0));
-    if (!LoadI) {
-        return false;
+    info.load = dyn_cast<LoadInst>(info.op->getOperand(0));
+    if (info.load && info.load->getPointerOperand() == info.addr) {
+        info.expr = info.op->getOperand(1);
+    } else {
+        info.load = dyn_cast<LoadInst>(info.op->getOperand(1));
+        if (!info.load) {
+            return false;
+        }
+
+        info.expr = info.op->getOperand(0);
     }
 
-    auto *GEP2 = dyn_cast<GetElementPtrInst>(LoadI->getPointerOperand());
-    if (!GEP2 || GEP2 != GEP) {
+    auto *GEP = dyn_cast<GetElementPtrInst>(info.load->getPointerOperand());
+    if (!GEP || info.addr != GEP) {
         return false;
     }
 
@@ -231,7 +256,6 @@ bool isReduction(StoreInst *SI) {
 
 void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {     
     auto values = insertPrologue(L, AI);
-    errs() << "Values count: " << values.size() << "\n";
     insertEpilogue(L, AI, values);
 
     auto *F = L->getHeader()->getParent();
@@ -241,7 +265,8 @@ void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {
     for (auto *BB: L->getBlocks()) {
         for (auto &I: *BB) {
             if (auto *locSI = dyn_cast<StoreInst>(&I)) {
-                if (getAllocaFromLoadOrStore(locSI) == AI && isReduction(locSI)) {
+                ReductionInfo info;
+                if (getAllocaFromLoadOrStore(locSI) == AI && getReductionInfo(locSI, info)) {
                     SI = locSI;
                 }
             }
@@ -249,8 +274,10 @@ void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {
     }
 
     if (SI) {
-        errs() << "SI: " << *SI << "\n";
-        replaceReductionWithSwitch(L, AI, SI, values);
+        ReductionInfo info;
+        getReductionInfo(SI, info);
+
+        replaceReductionWithSwitch(L, AI, info, values);
     }
 }
 
@@ -307,11 +334,11 @@ void ArrayScalarizerPass::insertEpilogue(Loop *L, AllocaInst *AI, const std::vec
     SmallVector<BasicBlock *> ExitBlocks(0);
     L->getExitBlocks(ExitBlocks);
     for (auto *BB: ExitBlocks) {
-        insertEpilogeToBB(L, AI, BB, values);
+        insertEpilogueToBB(L, AI, BB, values);
     }
 }
 
-void ArrayScalarizerPass::insertEpilogeToBB(Loop *L, AllocaInst *AI, BasicBlock *BB, const std::vector<Value *> &values) {
+void ArrayScalarizerPass::insertEpilogueToBB(Loop *L, AllocaInst *AI, BasicBlock *BB, const std::vector<Value *> &values) {
     LLVMContext &context = BB->getContext();
     Function *F = BB->getParent();
 
@@ -332,25 +359,17 @@ void ArrayScalarizerPass::insertEpilogeToBB(Loop *L, AllocaInst *AI, BasicBlock 
     }
 }
 
-void ArrayScalarizerPass::replaceReductionWithSwitch(Loop *L, AllocaInst *AI, StoreInst *SI, const std::vector<Value *> &values) {
+void ArrayScalarizerPass::replaceReductionWithSwitch(Loop *L, AllocaInst *AI, ReductionInfo info, const std::vector<Value *> &values) {
     auto &context = L->getHeader()->getContext();
     auto *F = L->getHeader()->getParent();
-    auto *BB = SI->getParent();
+    auto *BB = info.store->getParent();
 
-    auto *pBB = BB->splitBasicBlock(SI);
+    auto *pBB = BB->splitBasicBlock(info.store);
 
-    auto *CI = getLoadStoreIndex(SI);
+    auto *CI = getLoadStoreIndex(info.store);
 
     auto *switchInst = SwitchInst::Create(CI, pBB, values.size());
     ReplaceInstWithInst(BB->getTerminator(), switchInst);
-
-    auto *add = dyn_cast<AddOperator>(SI->getOperand(0));
-    auto *load = dyn_cast<Instruction>(add->getOperand(0));
-    auto *operand = add->getOperand(1);
-
-    errs() << *add << "\n";
-    errs() << *load << "\n";
-    errs() << *operand << "\n";
 
     for (int i = 0; i < values.size(); ++i) {
         auto *caseBB = BasicBlock::Create(context, "case", F, BB);
@@ -358,7 +377,8 @@ void ArrayScalarizerPass::replaceReductionWithSwitch(Loop *L, AllocaInst *AI, St
 
 
         auto *load = caseBuilder.CreateLoad(getAllocatedArrayType(AI), values[i]);
-        auto *newAdd = caseBuilder.CreateAdd(operand, load);
+
+        auto *newAdd = caseBuilder.CreateBinOp(info.op->getOpcode(), info.expr, load);
         auto *store = caseBuilder.CreateStore(newAdd, values[i]);
 
         auto *br = caseBuilder.CreateBr(pBB);
@@ -366,11 +386,9 @@ void ArrayScalarizerPass::replaceReductionWithSwitch(Loop *L, AllocaInst *AI, St
         switchInst->addCase(ConstantInt::get(Type::getInt64Ty(context), i), caseBB);
     }
 
-    auto *GEP = dyn_cast<GetElementPtrInst>(SI->getPointerOperand());
+    info.store->eraseFromParent();
+    cast<Instruction>(info.op)->eraseFromParent();
+    info.load->eraseFromParent();
 
-    SI->eraseFromParent();
-    dyn_cast<Instruction>(add)->eraseFromParent();
-    load->eraseFromParent();
-
-    GEP->eraseFromParent();
+    info.addr->eraseFromParent();
 }
