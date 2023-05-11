@@ -80,15 +80,16 @@ class ArrayScalarizerPass : public LoopPass, private bcl::Uncopyable {
 public:
     static char ID;
 
-    unsigned int loop_id = 0;
-
-    std::map<AllocaInst*, int> smallArrays;
-
     ArrayScalarizerPass() : LoopPass(ID) {
         initializeArrayScalarizerPassPass(*PassRegistry::getPassRegistry());
     }
 
     bool runOnLoop(Loop *L, LPPassManager &LPM) override;
+
+private:
+    unsigned int loop_id = 0;
+
+    std::map<AllocaInst*, int> smallArrays;
     void findAllSmallArrays(Loop &L);
 
     void makeTransformation(Loop *L, AllocaInst *AI);
@@ -98,6 +99,29 @@ public:
     void insertEpilogueToBB(Loop *L, AllocaInst *AI, BasicBlock *BB, const std::vector<Value *> &values);
 
     void replaceReductionWithSwitch(Loop *L, AllocaInst *AI, ReductionInfo info, const std::vector<Value *> &values);
+
+    int getAllocatedArraySize(AllocaInst *AI);
+    llvm::Type* getAllocatedArrayType(AllocaInst *AI);
+    
+    template<typename T>
+    AllocaInst* getAllocaFromLoadOrStore(Instruction *instr) {
+        if (auto *I = dyn_cast<T>(instr)) {
+            if (auto *AI = dyn_cast<AllocaInst>(I->getPointerOperand())) {
+                return AI;
+            }
+
+            if (auto *GEP = dyn_cast<GetElementPtrInst>(I->getPointerOperand())) {
+                return dyn_cast<AllocaInst>(GEP->getPointerOperand());
+            }
+        }
+
+        return nullptr;
+    }
+
+    AllocaInst* getAllocaFromLoadOrStore(Instruction *instr);
+    DbgDeclareInst* getDbgDeclare(Instruction *I);
+    Value* getLoadStoreIndex(Instruction *I);
+    bool getReductionInfo(StoreInst *SI, ReductionInfo &info);
 };
 
 char ArrayScalarizerPass::ID = 0;
@@ -113,7 +137,31 @@ LoopPass * llvm::createArrayScalarizerPass() {
     return new ArrayScalarizerPass();
 }
 
-int getAllocatedArraySize(AllocaInst *AI) {
+bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
+    if (L->getParentLoop()) { // We only handle outermost loops.
+        return false;
+    }
+
+    errs() << "========================\n";
+
+    findAllSmallArrays(*L);
+
+    for (auto &[ins, info]: smallArrays) {
+        makeTransformation(L, ins);
+    }
+
+    errs() << "========== M ===========\n";
+
+    errs() << *L->getHeader()->getParent()->getParent();
+
+    errs() << "========================\n";
+
+    loop_id++;
+
+    return true;
+}
+
+int ArrayScalarizerPass::getAllocatedArraySize(AllocaInst *AI) {
     if (auto *AT = dyn_cast<ArrayType>(AI->getAllocatedType())) {
         return AT->getNumElements();
     }
@@ -121,7 +169,7 @@ int getAllocatedArraySize(AllocaInst *AI) {
     return -1;
 }
 
-llvm::Type* getAllocatedArrayType(AllocaInst *AI) {
+llvm::Type* ArrayScalarizerPass::getAllocatedArrayType(AllocaInst *AI) {
     if (auto *AT = dyn_cast<ArrayType>(AI->getAllocatedType())) {
         return AT->getElementType();
     }
@@ -129,29 +177,14 @@ llvm::Type* getAllocatedArrayType(AllocaInst *AI) {
     return nullptr;
 }
 
-template<typename T>
-AllocaInst* get(Instruction *instr) {
-    if (auto *I = dyn_cast<T>(instr)) {
-        if (auto *AI = dyn_cast<AllocaInst>(I->getPointerOperand())) {
-            return AI;
-        }
-
-        if (auto *GEP = dyn_cast<GetElementPtrInst>(I->getPointerOperand())) {
-            return dyn_cast<AllocaInst>(GEP->getPointerOperand());
-        }
-    }
+AllocaInst* ArrayScalarizerPass::getAllocaFromLoadOrStore(Instruction *instr) {
+    if (auto *res = getAllocaFromLoadOrStore<LoadInst>(instr)) { return res; }
+    if (auto *res = getAllocaFromLoadOrStore<StoreInst>(instr)) { return res; }
 
     return nullptr;
 }
 
-AllocaInst* getAllocaFromLoadOrStore(Instruction *instr) {
-    if (auto *res = get<LoadInst>(instr)) { return res; }
-    if (auto *res = get<StoreInst>(instr)) { return res; }
-
-    return nullptr;
-}
-
-DbgDeclareInst* getDbgDeclare(Instruction *I) {
+DbgDeclareInst* ArrayScalarizerPass::getDbgDeclare(Instruction *I) {
     auto *F = I->getParent()->getParent();
 
     for (auto &BB : *F) {
@@ -182,7 +215,7 @@ void ArrayScalarizerPass::findAllSmallArrays(Loop &L) {
     }
 }
 
-Value *getLoadStoreIndex(Instruction *I) {
+Value* ArrayScalarizerPass::getLoadStoreIndex(Instruction *I) {
     if (auto *LI = dyn_cast<LoadInst>(I)) {
         auto *GEP = dyn_cast<GetElementPtrInst>(LI->getPointerOperand());
         if (GEP) {
@@ -200,32 +233,10 @@ Value *getLoadStoreIndex(Instruction *I) {
     return nullptr;
 }
 
-bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
-    if (L->getParentLoop()) { // We only handle outermost loops.
-        return false;
-    }
-
-    errs() << "========================\n";
-
-    findAllSmallArrays(*L);
-
-    for (auto &[ins, info]: smallArrays) {
-        makeTransformation(L, ins);
-    }
-
-    errs() << "========== M ===========\n";
-
-    errs() << *L->getHeader()->getParent()->getParent();
-
-    errs() << "========================\n";
-
-    loop_id++;
-
-    return true;
-}
 
 
-bool getReductionInfo(StoreInst *SI, ReductionInfo &info) {
+
+bool ArrayScalarizerPass::getReductionInfo(StoreInst *SI, ReductionInfo &info) {
     info.store = SI;
 
     info.addr = dyn_cast<GetElementPtrInst>(SI->getPointerOperand());
