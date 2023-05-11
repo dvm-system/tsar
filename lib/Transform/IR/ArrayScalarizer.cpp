@@ -79,6 +79,9 @@ struct ReductionInfo {
 class ArrayScalarizerPass : public LoopPass, private bcl::Uncopyable {
 public:
     static char ID;
+
+    unsigned int loop_id = 0;
+
     std::map<AllocaInst*, int> smallArrays;
 
     ArrayScalarizerPass() : LoopPass(ID) {
@@ -198,8 +201,7 @@ Value *getLoadStoreIndex(Instruction *I) {
 }
 
 bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
-    if (L->getParentLoop()) {
-        errs() << "Loop is nested\n";
+    if (L->getParentLoop()) { // We only handle outermost loops.
         return false;
     }
 
@@ -216,6 +218,8 @@ bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
     errs() << *L->getHeader()->getParent()->getParent();
 
     errs() << "========================\n";
+
+    loop_id++;
 
     return true;
 }
@@ -255,11 +259,6 @@ bool getReductionInfo(StoreInst *SI, ReductionInfo &info) {
 }
 
 void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {     
-    auto values = insertPrologue(L, AI);
-    insertEpilogue(L, AI, values);
-
-    auto *F = L->getHeader()->getParent();
-
     StoreInst *SI = nullptr;
 
     for (auto *BB: L->getBlocks()) {
@@ -273,12 +272,19 @@ void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {
         }
     }
 
-    if (SI) {
-        ReductionInfo info;
-        getReductionInfo(SI, info);
-
-        replaceReductionWithSwitch(L, AI, info, values);
+    if (!SI) {
+        return;
     }
+
+    auto values = insertPrologue(L, AI);
+    insertEpilogue(L, AI, values);
+
+    auto *F = L->getHeader()->getParent();
+
+    ReductionInfo info;
+    getReductionInfo(SI, info);
+
+    replaceReductionWithSwitch(L, AI, info, values);
 }
 
 std::vector<Value *> ArrayScalarizerPass::insertPrologue(Loop *L, AllocaInst *AI) {
@@ -296,27 +302,24 @@ std::vector<Value *> ArrayScalarizerPass::insertPrologue(Loop *L, AllocaInst *AI
     builder.SetInsertPoint(pBB->getFirstNonPHI());
 
     auto *declare = getDbgDeclare(AI);
-    if (declare) {
-        errs() << "Found DDI: " << *declare << "\n";
-    }
-
     std::vector<Value *> values;
 
     DIBuilder DIB(*L->getHeader()->getModule());
 
+    auto suf = std::to_string(loop_id);
+
     for (int i = 0; i < smallArrays[AI]; ++i) {
         Value* indices[] = {ConstantInt::get(Type::getInt64Ty(context), 0), ConstantInt::get(Type::getInt64Ty(context), i)};
-        auto *gep = builder.CreateGEP(AI->getAllocatedType(), AI, indices, "element", true);
+        auto *gep = builder.CreateGEP(AI->getAllocatedType(), AI, indices);
         auto *load = builder.CreateLoad(getAllocatedArrayType(AI), gep);
-        auto *newVal = builder.CreateAlloca(getAllocatedArrayType(AI), nullptr, "newVal");
+        auto *newVal = builder.CreateAlloca(getAllocatedArrayType(AI), nullptr);
         auto *store = builder.CreateStore(load, newVal);
 
         values.push_back(newVal);
 
         auto *arrayVar = declare->getVariable();
 
-
-        std::string name = arrayVar->getName().str() + "[" + std::to_string(i) + "]";
+        std::string name = arrayVar->getName().str() + "[" + std::to_string(i) + "]_" + suf;
 
         DIBasicType *BT = DIB.createBasicType("int", 32, dwarf::DW_ATE_signed);
 
@@ -346,9 +349,6 @@ void ArrayScalarizerPass::insertEpilogueToBB(Loop *L, AllocaInst *AI, BasicBlock
     builder.SetInsertPoint(BB->getFirstNonPHI());
 
     auto *declare = getDbgDeclare(AI);
-    if (declare) {
-        errs() << "Found DDI: " << *declare << "\n";
-    }
 
     for (int i = 0; i < smallArrays[AI]; ++i) {
         Value* indices[] = {ConstantInt::get(Type::getInt64Ty(context), 0), ConstantInt::get(Type::getInt64Ty(context), i)};
