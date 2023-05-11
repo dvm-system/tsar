@@ -57,21 +57,21 @@ namespace {
 const int MAX_ARRAY_SIZE = 5;
 
 /*
+    Reduction operation structure:
 
     %addr = gep ...
 
     %load = load %addr
-    %op = add %load, %expr
+    %op = binOp %load, %expr
 
     store %op, %addr
-
 */
 struct ReductionInfo {
     Value *expr;
 
     GetElementPtrInst *addr;    // %addr = gep ...
     LoadInst *load;             // %load = load %addr
-    BinaryOperator *op;               // %op = add %load, %expr
+    BinaryOperator *op;         // %op = add %load, %expr
     StoreInst *store;           // store %op, %addr
 };
 
@@ -101,7 +101,7 @@ private:
     void replaceReductionWithSwitch(Loop *L, AllocaInst *AI, ReductionInfo info, const std::vector<Value *> &values);
 
     int getAllocatedArraySize(AllocaInst *AI);
-    llvm::Type* getAllocatedArrayType(AllocaInst *AI);
+    llvm::Type* getAllocatedArrayElementType(AllocaInst *AI);
     
     template<typename T>
     AllocaInst* getAllocaFromLoadOrStore(Instruction *instr) {
@@ -122,6 +122,7 @@ private:
     DbgDeclareInst* getDbgDeclare(Instruction *I);
     Value* getLoadStoreIndex(Instruction *I);
     bool getReductionInfo(StoreInst *SI, ReductionInfo &info);
+    bool isTransformationValid(Loop *L, AllocaInst *AI, ReductionInfo &info);
 };
 
 char ArrayScalarizerPass::ID = 0;
@@ -138,10 +139,6 @@ LoopPass * llvm::createArrayScalarizerPass() {
 }
 
 bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
-    if (L->getParentLoop()) { // We only handle outermost loops.
-        return false;
-    }
-
     errs() << "========================\n";
 
     findAllSmallArrays(*L);
@@ -169,7 +166,7 @@ int ArrayScalarizerPass::getAllocatedArraySize(AllocaInst *AI) {
     return -1;
 }
 
-llvm::Type* ArrayScalarizerPass::getAllocatedArrayType(AllocaInst *AI) {
+llvm::Type* ArrayScalarizerPass::getAllocatedArrayElementType(AllocaInst *AI) {
     if (auto *AT = dyn_cast<ArrayType>(AI->getAllocatedType())) {
         return AT->getElementType();
     }
@@ -233,9 +230,6 @@ Value* ArrayScalarizerPass::getLoadStoreIndex(Instruction *I) {
     return nullptr;
 }
 
-
-
-
 bool ArrayScalarizerPass::getReductionInfo(StoreInst *SI, ReductionInfo &info) {
     info.store = SI;
 
@@ -269,31 +263,32 @@ bool ArrayScalarizerPass::getReductionInfo(StoreInst *SI, ReductionInfo &info) {
     return true;
 }
 
-void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {     
-    StoreInst *SI = nullptr;
+bool ArrayScalarizerPass::isTransformationValid(Loop *L, AllocaInst *AI, ReductionInfo &info) {
+    if (L->getParentLoop()) {
+        return false;
+    }
 
     for (auto *BB: L->getBlocks()) {
         for (auto &I: *BB) {
-            if (auto *locSI = dyn_cast<StoreInst>(&I)) {
-                ReductionInfo info;
-                if (getAllocaFromLoadOrStore(locSI) == AI && getReductionInfo(locSI, info)) {
-                    SI = locSI;
+            if (auto *SI = dyn_cast<StoreInst>(&I)) {
+                if (getAllocaFromLoadOrStore(SI) == AI && getReductionInfo(SI, info)) {
+                    return true;
                 }
             }
         }
     }
 
-    if (!SI) {
+    return false;
+}
+
+void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {     
+    ReductionInfo info;
+    if (!isTransformationValid(L, AI, info)) {
         return;
     }
 
     auto values = insertPrologue(L, AI);
     insertEpilogue(L, AI, values);
-
-    auto *F = L->getHeader()->getParent();
-
-    ReductionInfo info;
-    getReductionInfo(SI, info);
 
     replaceReductionWithSwitch(L, AI, info, values);
 }
@@ -322,8 +317,8 @@ std::vector<Value *> ArrayScalarizerPass::insertPrologue(Loop *L, AllocaInst *AI
     for (int i = 0; i < smallArrays[AI]; ++i) {
         Value* indices[] = {ConstantInt::get(Type::getInt64Ty(context), 0), ConstantInt::get(Type::getInt64Ty(context), i)};
         auto *gep = builder.CreateGEP(AI->getAllocatedType(), AI, indices);
-        auto *load = builder.CreateLoad(getAllocatedArrayType(AI), gep);
-        auto *newVal = builder.CreateAlloca(getAllocatedArrayType(AI), nullptr);
+        auto *load = builder.CreateLoad(getAllocatedArrayElementType(AI), gep);
+        auto *newVal = builder.CreateAlloca(getAllocatedArrayElementType(AI), nullptr);
         auto *store = builder.CreateStore(load, newVal);
 
         values.push_back(newVal);
@@ -364,7 +359,7 @@ void ArrayScalarizerPass::insertEpilogueToBB(Loop *L, AllocaInst *AI, BasicBlock
     for (int i = 0; i < smallArrays[AI]; ++i) {
         Value* indices[] = {ConstantInt::get(Type::getInt64Ty(context), 0), ConstantInt::get(Type::getInt64Ty(context), i)};
         auto *gep = builder.CreateGEP(AI->getAllocatedType(), AI, indices, "element", true);
-        auto *val = builder.CreateLoad(getAllocatedArrayType(AI), values[i]);
+        auto *val = builder.CreateLoad(getAllocatedArrayElementType(AI), values[i]);
 
         auto *store = builder.CreateStore(val, gep);
     }
@@ -387,7 +382,7 @@ void ArrayScalarizerPass::replaceReductionWithSwitch(Loop *L, AllocaInst *AI, Re
         IRBuilder<> caseBuilder(caseBB);
 
 
-        auto *load = caseBuilder.CreateLoad(getAllocatedArrayType(AI), values[i]);
+        auto *load = caseBuilder.CreateLoad(getAllocatedArrayElementType(AI), values[i]);
 
         auto *newAdd = caseBuilder.CreateBinOp(info.op->getOpcode(), info.expr, load);
         auto *store = caseBuilder.CreateStore(newAdd, values[i]);
