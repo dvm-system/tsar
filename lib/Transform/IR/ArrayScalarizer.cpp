@@ -89,10 +89,10 @@ public:
 private:
     unsigned int loop_id = 0;
 
-    std::map<AllocaInst*, int> smallArrays;
+    std::set<AllocaInst*> allocas;
     void findAllSmallArrays(Loop &L);
 
-    void makeTransformation(Loop *L, AllocaInst *AI);
+    bool makeTransformation(Loop *L, AllocaInst *AI);
 
     std::vector<Value *> insertPrologue(Loop *L, AllocaInst *AI);
     void insertEpilogue(Loop *L, AllocaInst *AI, const std::vector<Value *> &values);
@@ -123,6 +123,7 @@ private:
     Value* getLoadStoreIndex(Instruction *I);
     bool getReductionInfo(StoreInst *SI, ReductionInfo &info);
     bool isTransformationValid(Loop *L, AllocaInst *AI, ReductionInfo &info);
+    std::vector<ReductionInfo> getReductions(Loop *L, AllocaInst *AI);
 };
 
 char ArrayScalarizerPass::ID = 0;
@@ -139,12 +140,11 @@ LoopPass * llvm::createArrayScalarizerPass() {
 }
 
 bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
-    errs() << "========================\n";
-
     findAllSmallArrays(*L);
 
-    for (auto &[ins, info]: smallArrays) {
-        makeTransformation(L, ins);
+    bool changed = false;
+    for (auto &alloca: allocas) {
+        changed = changed || makeTransformation(L, alloca);
     }
 
     errs() << "========== M ===========\n";
@@ -155,7 +155,7 @@ bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
 
     loop_id++;
 
-    return true;
+    return changed;
 }
 
 int ArrayScalarizerPass::getAllocatedArraySize(AllocaInst *AI) {
@@ -202,10 +202,8 @@ void ArrayScalarizerPass::findAllSmallArrays(Loop &L) {
         for (auto &I: *BB) {
             if (auto *AI = getAllocaFromLoadOrStore(&I)) {
                 int size = getAllocatedArraySize(AI);
-                if (size != -1 && size <= MAX_ARRAY_SIZE && smallArrays.find(AI) == smallArrays.end()) {
-                    smallArrays[AI] = {
-                        size
-                    };
+                if (size != -1 && size <= MAX_ARRAY_SIZE && allocas.find(AI) == allocas.end()) {
+                    allocas.insert(AI);
                 }
             }
         }
@@ -263,34 +261,41 @@ bool ArrayScalarizerPass::getReductionInfo(StoreInst *SI, ReductionInfo &info) {
     return true;
 }
 
-bool ArrayScalarizerPass::isTransformationValid(Loop *L, AllocaInst *AI, ReductionInfo &info) {
-    if (L->getParentLoop()) {
-        return false;
-    }
+std::vector<ReductionInfo> ArrayScalarizerPass::getReductions(Loop *L, AllocaInst *AI) {
+    std::vector<ReductionInfo> result;
 
     for (auto *BB: L->getBlocks()) {
         for (auto &I: *BB) {
             if (auto *SI = dyn_cast<StoreInst>(&I)) {
+                ReductionInfo info;
                 if (getAllocaFromLoadOrStore(SI) == AI && getReductionInfo(SI, info)) {
-                    return true;
+                    result.push_back(info);
                 }
             }
         }
     }
 
-    return false;
+    return result;
 }
 
-void ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {     
-    ReductionInfo info;
-    if (!isTransformationValid(L, AI, info)) {
-        return;
+bool ArrayScalarizerPass::makeTransformation(Loop *L, AllocaInst *AI) {
+    if (L->getParentLoop()) {
+        return false;
     }
 
+    auto reductions = getReductions(L, AI);
+    if (reductions.size() < 1) {
+        return false;
+    }
+    
     auto values = insertPrologue(L, AI);
     insertEpilogue(L, AI, values);
 
-    replaceReductionWithSwitch(L, AI, info, values);
+    for (auto reduction: reductions) {
+        replaceReductionWithSwitch(L, AI, reduction, values);
+    }
+
+    return true;
 }
 
 std::vector<Value *> ArrayScalarizerPass::insertPrologue(Loop *L, AllocaInst *AI) {
@@ -314,7 +319,9 @@ std::vector<Value *> ArrayScalarizerPass::insertPrologue(Loop *L, AllocaInst *AI
 
     auto suf = std::to_string(loop_id);
 
-    for (int i = 0; i < smallArrays[AI]; ++i) {
+    int size = getAllocatedArraySize(AI);
+
+    for (int i = 0; i < size; ++i) {
         Value* indices[] = {ConstantInt::get(Type::getInt64Ty(context), 0), ConstantInt::get(Type::getInt64Ty(context), i)};
         auto *gep = builder.CreateGEP(AI->getAllocatedType(), AI, indices);
         auto *load = builder.CreateLoad(getAllocatedArrayElementType(AI), gep);
@@ -356,7 +363,8 @@ void ArrayScalarizerPass::insertEpilogueToBB(Loop *L, AllocaInst *AI, BasicBlock
 
     auto *declare = getDbgDeclare(AI);
 
-    for (int i = 0; i < smallArrays[AI]; ++i) {
+    int size = getAllocatedArraySize(AI);
+    for (int i = 0; i < size; ++i) {
         Value* indices[] = {ConstantInt::get(Type::getInt64Ty(context), 0), ConstantInt::get(Type::getInt64Ty(context), i)};
         auto *gep = builder.CreateGEP(AI->getAllocatedType(), AI, indices, "element", true);
         auto *val = builder.CreateLoad(getAllocatedArrayElementType(AI), values[i]);
