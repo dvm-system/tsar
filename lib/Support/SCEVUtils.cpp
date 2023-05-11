@@ -718,6 +718,8 @@ Optional<int64_t> compareSCEVs(const SCEV *LHS, const SCEV *RHS,
                                ScalarEvolution *SE) {
   assert(SE && "ScalarEvolution must be specified!");
   assert(LHS && RHS && "SCEV must be specified!");
+  if (LHS == RHS)
+    return 0;
   TypeQueue TQLHS, TQRHS;
   auto InnerLHS = getTypeQueue(TQLHS, LHS);
   auto InnerRHS = getTypeQueue(TQRHS, RHS);
@@ -766,9 +768,11 @@ Optional<int64_t> compareSCEVs(const SCEV *LHS, const SCEV *RHS,
     }
     return None;
   }
-  if (auto Const = llvm::dyn_cast<llvm::SCEVConstant>(
-      SE->getMinusSCEV(InnerLHS, InnerRHS)))
-    return Const->getAPInt().getSExtValue();
+  if (InnerLHS == InnerRHS)
+    return 0;
+  auto Const = SE->computeConstantDifference(InnerLHS, InnerRHS);
+  if (Const)
+    return Const->getSExtValue();
   return None;
 }
 }
