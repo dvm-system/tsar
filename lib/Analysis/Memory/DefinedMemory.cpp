@@ -1156,7 +1156,6 @@ void ReachDFFwk::collapse(DFRegion *R) {
                                          const LocationSet &LS) -> bool {
     bool AreAllCollapsedOrAuxiliary = true;
     bool HasCollapsed = false;
-    bool HasOtherGV = false;
     auto *GV{dyn_cast<GlobalValue>(getUnderlyingObject(Loc.Ptr, 0))};
     for (auto &OtherLoc : LS) {
       if (&Loc == &OtherLoc)
@@ -1164,7 +1163,6 @@ void ReachDFFwk::collapse(DFRegion *R) {
       auto *OtherGV{dyn_cast<GlobalValue>(
           getUnderlyingObject(OtherLoc.Ptr, 0))};
       if (GV == OtherGV) {
-        HasOtherGV = true;
         if ((OtherLoc.Kind & MemoryLocationRange::LocKind::Collapsed) &&
             !(OtherLoc.Kind & MemoryLocationRange::LocKind::Auxiliary))
           HasCollapsed = true;
@@ -1175,7 +1173,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
         }
       }
     }
-    if (AreAllCollapsedOrAuxiliary && HasCollapsed || !HasOtherGV)
+    if (AreAllCollapsedOrAuxiliary && HasCollapsed)
       return true;
     return false;
   };
@@ -1253,9 +1251,7 @@ void ReachDFFwk::collapse(DFRegion *R) {
             }
           }
         }
-        if (AreAllCollapsed && SameUnderlyingObjCount > 1 ||
-            Loc.Kind == MemoryLocationRange::LocKind::Auxiliary &&
-            SameUnderlyingObjCount == 1 && AreAllCollapsed)
+        if (AreAllCollapsed && SameUnderlyingObjCount > 1)
           SkipExcessUse = true;
       } else if (Loc.Kind & MemoryLocationRange::LocKind::Auxiliary) {
         SkipExcessUse = MaySkipAuxiliaryLocation(Loc, NewUses);
