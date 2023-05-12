@@ -292,6 +292,9 @@ bool ArrayScalarizerPass::getReductionInfo(StoreInst *SI, ReductionInfo &info) {
 std::vector<ReductionInfo> ArrayScalarizerPass::getReductions(Loop *L, AllocaInst *AI) {
     std::vector<ReductionInfo> result;
 
+    std::set<StoreInst *> processedStores;
+    std::set<LoadInst *> processedLoads;
+
     for (auto *BB: L->getBlocks()) {
         for (auto &I: *BB) {
             if (auto *SI = dyn_cast<StoreInst>(&I)) {
@@ -299,20 +302,27 @@ std::vector<ReductionInfo> ArrayScalarizerPass::getReductions(Loop *L, AllocaIns
                 if (getAllocaFromLoadOrStore(SI) == AI) {
                     if (getReductionInfo(SI, info)) {
                         result.push_back(info);
-                    } else {
-                        return std::vector<ReductionInfo>{};
-                    }
-                } else {
-                    if (!isMemorySafe(AI, SI)) {
-                        return std::vector<ReductionInfo>();
+
+                        processedStores.insert(info.store);
+                        processedLoads.insert(info.load);
                     }
                 }
             }
-            // if (auto *LI = dyn_cast<LoadInst>(&I)) {
-            //     if (!isMemorySafe(AI, LI)) {
-            //         return std::vector<ReductionInfo>();
-            //     }
-            // }
+        }
+    }
+
+    for (auto *BB: L->getBlocks()) {
+        for (auto &I: *BB) {
+            if (auto *SI = dyn_cast<StoreInst>(&I)) {
+                if (processedStores.find(SI) == processedStores.end() && !isMemorySafe(AI, SI)) {
+                    return std::vector<ReductionInfo>();
+                }
+            }
+            if (auto *LI = dyn_cast<LoadInst>(&I)) {
+                if (processedLoads.find(LI) == processedLoads.end() && !isMemorySafe(AI, LI)) {
+                    return std::vector<ReductionInfo>();
+                }
+            }
         }
     }
 
