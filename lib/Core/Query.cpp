@@ -144,6 +144,9 @@ void addInitialTransformations(legacy::PassManager &Passes) {
   Passes.add(createDILoopRetrieverPass());
   Passes.add(createDINodeRetrieverPass());
   Passes.add(createFlangDummyAliasAnalysis());
+
+  Passes.add(createArrayScalarizerPass());
+
 }
 
 void addBeforeTfmAnalysis(legacy::PassManager &Passes, StringRef AnalysisUse) {

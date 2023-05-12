@@ -38,4 +38,5 @@ void llvm::initializeIRTransform(PassRegistry &Registry) {
   initializeDependenceInlinerAttributerPass(Registry);
   initializeNoCaptureAnalysisPass(Registry);
   initializePointerScalarizerPassPass(Registry);
+  initializeArrayScalarizerPassPass(Registry);
 }
