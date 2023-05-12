@@ -29,6 +29,8 @@
 #include "tsar/Analysis/Memory/EstimateMemory.h"
 #include "tsar/Analysis/Memory/MemoryAccessUtils.h"
 #include <tsar/Analysis/Memory/Utils.h>
+#include <tsar/Unparse/Utils.h>
+#include <tsar/Analysis/Memory/DependenceAnalysis.h>
 #include "tsar/Support/IRUtils.h"
 #include "tsar/Transform/IR/InterprocAttr.h"
 #include <llvm/Analysis/LoopInfo.h>
@@ -85,6 +87,10 @@ public:
     }
 
     bool runOnLoop(Loop *L, LPPassManager &LPM) override;
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+        AU.addRequired<EstimateMemoryPass>();
+        AU.addRequired<DependenceAnalysisWrapperPass>();
+    }
 
 private:
     unsigned int loop_id = 0;
@@ -118,12 +124,29 @@ private:
         return nullptr;
     }
 
+    template<typename T>
+    bool isMemorySafe(AllocaInst *AI, T *I) {
+        auto *EM1 = AT->find(MemoryLocation(AI, 12));
+        auto *EM2 = AT->find(MemoryLocation::get(I));
+
+        SpanningTreeRelation<AliasTree *> STR(AT);
+        if (EM1 != nullptr && EM2 != nullptr) {
+            return STR.isUnreachable(EM1->getAliasNode(*AT), EM2->getAliasNode(*AT));
+        }
+
+        return true;
+    }
+
     AllocaInst* getAllocaFromLoadOrStore(Instruction *instr);
     DbgDeclareInst* getDbgDeclare(Instruction *I);
     Value* getLoadStoreIndex(Instruction *I);
     bool getReductionInfo(StoreInst *SI, ReductionInfo &info);
     bool isTransformationValid(Loop *L, AllocaInst *AI, ReductionInfo &info);
     std::vector<ReductionInfo> getReductions(Loop *L, AllocaInst *AI);
+
+
+    AliasTree *AT;
+    DependenceInfo *depInfo;
 };
 
 char ArrayScalarizerPass::ID = 0;
@@ -132,6 +155,8 @@ char ArrayScalarizerPass::ID = 0;
 
 INITIALIZE_PASS_BEGIN(ArrayScalarizerPass, "array2reg",
     "Promote Array To Register", false, false)
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
 INITIALIZE_PASS_END(ArrayScalarizerPass, "array2reg",
     "Promote Array To Register", false, false)
 
@@ -140,6 +165,9 @@ LoopPass * llvm::createArrayScalarizerPass() {
 }
 
 bool ArrayScalarizerPass::runOnLoop(Loop *L, LPPassManager &LPM) {
+    AT = &getAnalysis<EstimateMemoryPass>().getAliasTree();
+    depInfo = &getAnalysis<DependenceAnalysisWrapperPass>().getDI();
+
     findAllSmallArrays(*L);
 
     bool changed = false;
@@ -268,10 +296,23 @@ std::vector<ReductionInfo> ArrayScalarizerPass::getReductions(Loop *L, AllocaIns
         for (auto &I: *BB) {
             if (auto *SI = dyn_cast<StoreInst>(&I)) {
                 ReductionInfo info;
-                if (getAllocaFromLoadOrStore(SI) == AI && getReductionInfo(SI, info)) {
-                    result.push_back(info);
+                if (getAllocaFromLoadOrStore(SI) == AI) {
+                    if (getReductionInfo(SI, info)) {
+                        result.push_back(info);
+                    } else {
+                        return std::vector<ReductionInfo>{};
+                    }
+                } else {
+                    if (!isMemorySafe(AI, SI)) {
+                        return std::vector<ReductionInfo>();
+                    }
                 }
             }
+            // if (auto *LI = dyn_cast<LoadInst>(&I)) {
+            //     if (!isMemorySafe(AI, LI)) {
+            //         return std::vector<ReductionInfo>();
+            //     }
+            // }
         }
     }
 
