@@ -228,5 +228,11 @@ def warn_reverse_increment_complex: Warning<"complex increment expression preven
 def warn_reverse_condition_complex: Warning<"complex conditional expression prevents loop reversal">;
 def warn_reverse_initialization_complex: Warning<"complex initialization expression prevents loop reversal">;
 
+def error_not_var : Error<"Given DeclRefExpr is not a variable">;
+def error_induction_not_canonical : Error<"unable to determine counter variable name: loop is not in a canonical form">;
+def error_no_inductive_found : Error<"no inductive variables found in loop, specify them manually">;
+def warn_evaluate_true : Warning<"given variable may not be inductive">;
+def warn_induction_parameters : Warning<"could not determine parameters automatically, specify them manually">;
+
 // Fortran-specific diagnostics.
 def warn_fortran_no_execution_part: Warning<"unable to locate execution-part statmenets">;
