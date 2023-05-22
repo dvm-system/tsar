@@ -40,4 +40,5 @@ void llvm::initializeClangTransform(PassRegistry &Registry) {
   initializeClangLoopInterchangePass(Registry);
   initializeClangLoopReversePass(Registry);
   initializeClangUnreachableCodeEliminationPassPass(Registry);
+  initializeClangInductivePass(Registry);
 }
