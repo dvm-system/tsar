@@ -25,9 +25,15 @@
 #ifndef TSAR_MEMORY_LOCATION_RANGE_H
 #define TSAR_MEMORY_LOCATION_RANGE_H
 
+#include "tsar/Analysis/Memory/AssumptionInfo.h"
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/BitmaskEnum.h>
 #include <llvm/Analysis/MemoryLocation.h>
+
+namespace llvm {
+class ScalarEvolution;
+class SCEV;
+}
 
 namespace tsar {
 
@@ -42,24 +48,37 @@ LLVM_ENABLE_BITMASK_ENUMS_IN_NAMESPACE();
 /// LowerBound is always 0.
 struct MemoryLocationRange {
   enum : uint64_t { UnknownSize = llvm::MemoryLocation::UnknownSize };
+  // There are several kinds of memory locations:
+  // * Default - the kind of memory locations corresponding to scalar variables
+  // or array memory locations can potentially be collapsed later.
+  // * NonCollapsable - the kind of memory locations that are not scalar, for
+  // which it has already been determined that collapse cannot be performed.
+  // * Collapsed - the kind of collapsed memory locations.
+  // * Hint - the kind of memory locations artificially added for correct
+  // private variables analysis.
+  // * Auxiliary - the kind of memory locations that intersect with some other
+  // memory location and are added to MemorySet as auxiliary, in order to take
+  // into account the fact that the same memory is being accessed.
   enum LocKind : uint8_t {
     Default = 0,
     NonCollapsable = 1u << 0,
     Collapsed = 1u << 1,
     Hint = 1u << 2,
-    LLVM_MARK_AS_BITMASK_ENUM(Hint)
+    Auxiliary = 1u << 3,
+    LLVM_MARK_AS_BITMASK_ENUM(Auxiliary)
   };
 
   struct Dimension {
-    uint64_t Start;
-    uint64_t Step;
-    uint64_t TripCount;
+    const llvm::SCEV *Start;
+    const llvm::SCEV *End;
+    const llvm::SCEV *Step;
     uint64_t DimSize;
-    Dimension() : Start(0), Step(0), TripCount(0), DimSize(0) {}
+    Dimension() : Start(nullptr), End(nullptr), Step(nullptr), DimSize(0) {}
     inline bool operator==(const Dimension &Other) const {
-      return Start == Other.Start && Step == Other.Step &&
-             TripCount == Other.TripCount && DimSize == Other.DimSize;
+      return Start == Other.Start && End == Other.End && Step == Other.Step &&
+             DimSize == Other.DimSize;
     }
+    void print(llvm::raw_ostream &OS, bool IsDebug = false) const;
   };
 
   const llvm::Value * Ptr;
@@ -68,6 +87,8 @@ struct MemoryLocationRange {
   llvm::SmallVector<Dimension, 0> DimList;
   llvm::AAMDNodes AATags;
   LocKind Kind;
+  llvm::ScalarEvolution *SE;
+  const AssumptionMap *AM;
 
   /// Return a location with information about the memory reference by the given
   /// instruction.
@@ -135,23 +156,26 @@ struct MemoryLocationRange {
                                LocationSize UpperBound = UnknownSize,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
       : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags), Kind(LocKind::Default) {}
+        AATags(AATags), SE(nullptr), AM(nullptr), Kind(LocKind::Default) {}
 
   explicit MemoryLocationRange(const llvm::Value *Ptr,
                                LocationSize LowerBound,
                                LocationSize UpperBound,
                                LocKind Kind,
+                               llvm::ScalarEvolution *SE,
+                               AssumptionMap *AM,
                                const llvm::AAMDNodes &AATags = llvm::AAMDNodes())
-      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound),
-        AATags(AATags), Kind(Kind) {}
+      : Ptr(Ptr), LowerBound(LowerBound), UpperBound(UpperBound), Kind(Kind),
+        SE(SE), AM(AM), AATags(AATags) {}
 
   MemoryLocationRange(const llvm::MemoryLocation &Loc)
       : Ptr(Loc.Ptr), LowerBound(0), UpperBound(Loc.Size), AATags(Loc.AATags),
-        Kind(LocKind::Default) {}
+        Kind(LocKind::Default), SE(nullptr), AM(nullptr) {}
 
   MemoryLocationRange(const MemoryLocationRange &Loc)
       : Ptr(Loc.Ptr), LowerBound(Loc.LowerBound), UpperBound(Loc.UpperBound),
-        AATags(Loc.AATags), DimList(Loc.DimList), Kind(Loc.Kind) {}
+        AATags(Loc.AATags), DimList(Loc.DimList), Kind(Loc.Kind), SE(Loc.SE),
+        AM(Loc.AM) {}
 
   MemoryLocationRange &operator=(const llvm::MemoryLocation &Loc) {
     Ptr = Loc.Ptr;
@@ -159,13 +183,16 @@ struct MemoryLocationRange {
     UpperBound = Loc.Size;
     AATags = Loc.AATags;
     Kind = Default;
+    SE = nullptr;
+    AM = nullptr;
     return *this;
   }
 
   bool operator==(const MemoryLocationRange &Other) const {
     return Ptr == Other.Ptr && AATags == Other.AATags &&
       LowerBound == Other.LowerBound && UpperBound == Other.UpperBound &&
-      DimList == Other.DimList && Kind == Other.Kind;
+      DimList == Other.DimList && SE == Other.SE && AM == Other.AM &&
+      Kind == Other.Kind;
   }
 
   std::string getKindAsString() const {
@@ -183,7 +210,25 @@ struct MemoryLocationRange {
       append("Collapsed", KindStr);
     if (Kind & Hint)
       append("Hint", KindStr);
+    if (Kind & Auxiliary)
+      append("Auxiliary", KindStr);
     return KindStr;
+  }
+
+  /// If the location is associated with an array, i.e. it has a non-empty list
+  /// of dimensions, convert it to an ordinary location with an empty list of
+  /// dimensions and return it. The new location covers the entire memory of 
+  /// the array, even though the dimensions are not completely used. 
+  MemoryLocationRange expand() const {
+    if (DimList.empty())
+      return *this;
+    assert(UpperBound.hasValue() && "UpperBound must have a value!");
+    auto FullSize = UpperBound.getValue();;
+    for (std::size_t I = 0; I < DimList.size(); ++I)
+      FullSize *= DimList[I].DimSize;
+    if (FullSize == 0)
+      return MemoryLocationRange(Ptr, 0, UnknownSize, AATags);
+    return MemoryLocationRange(Ptr, 0, LocationSize(FullSize), AATags);
   }
 };
 
@@ -204,8 +249,10 @@ struct MemoryLocationRange {
 /// exact differences will not be saved.
 /// \return The result of intersection. If it is None, intersection is empty.
 /// If it is a location, but `Ptr` of the returned location is `nullptr`, then
-/// the intersection may exist but can't be calculated. Otherwise, the
-/// returned location is an exact intersection.
+/// the intersection may exist but can't be calculated (note that you will get
+/// the same result if the intersection is exact but LC or RC is not `nullptr`
+/// and we can't find the exact differences). Otherwise, the returned location 
+/// is an exact intersection. 
 llvm::Optional<MemoryLocationRange> intersect(
     MemoryLocationRange LHS,
     MemoryLocationRange RHS,

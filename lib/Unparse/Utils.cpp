@@ -31,6 +31,7 @@
 #include "tsar/Unparse/DIUnparser.h"
 #include "tsar/Unparse/SourceUnparserUtils.h"
 #include "tsar/Unparse/VariableLocation.h"
+#include <llvm/Analysis/ValueTracking.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Transforms/Utils/Local.h>
@@ -84,12 +85,8 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
   if (!IsDebug) {
     if (!Loc.DimList.empty()) {
       O << ", ";
-      for (auto &Dim : Loc.DimList) {
-        O << "[";
-        O << Dim.Start << ":" << Dim.TripCount << ":" << Dim.Step << "," <<
-             Dim.DimSize;
-        O << "]";
-      }
+      for (auto &Dim : Loc.DimList)
+        Dim.print(O);
     }
   }
   O << ">";
@@ -97,13 +94,12 @@ void printLocationSource(llvm::raw_ostream &O, const MemoryLocationRange &Loc,
     if (!Loc.DimList.empty()) {
       O << ", {";
       for (auto &Dimension : Loc.DimList)
-        O << "{Start: " << Dimension.Start << ", Step: " << Dimension.Step <<
-            ", TripCount: " << Dimension.TripCount << ", DimSize: " <<
-            Dimension.DimSize << "}";
+        Dimension.print(O, true);
       O << "}";
     }
     O << " (" << Loc.getKindAsString() << ") ";
     O << " [" << Loc.Ptr << "]";
+    O << " [Underlying: " << getUnderlyingObject(Loc.Ptr, 0) << "]";
   }
 }
 void printLocationSource(llvm::raw_ostream &O, const EstimateMemory &EM,

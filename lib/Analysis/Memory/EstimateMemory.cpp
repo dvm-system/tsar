@@ -1115,6 +1115,14 @@ bool EstimateMemoryPass::runOnFunction(Function &F) {
         return;
     if (AccessedMemory.count(V))
       return;
+  if (auto *GEP{dyn_cast<GEPOperator>(V)}) {
+    auto IsOnlyGEPUsers{true};
+    for_each_user_insts(const_cast<Value &>(*V), [&IsOnlyGEPUsers](auto *U) {
+      IsOnlyGEPUsers &= isa<GEPOperator>(U);
+    });
+    if (IsOnlyGEPUsers)
+      return;
+  }    
     auto PointeeTy{getPointerElementType(*V)};
     addLocation(MemoryLocation(
         V, PointeeTy && PointeeTy->isSized()

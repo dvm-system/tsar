@@ -22,6 +22,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsar/Analysis/Attributes.h"
+#include "tsar/Analysis/Memory/AssumptionInfo.h"
 #include "tsar/Analysis/Memory/DefinedMemory.h"
 #include "tsar/Analysis/Memory/Delinearization.h"
 #include "tsar/Analysis/Memory/EstimateMemory.h"
@@ -96,7 +97,8 @@ using GlobalDefinedMemoryProvider = FunctionPassProvider<
   EstimateMemoryPass,
   DominatorTreeWrapperPass,
   DelinearizationPass,
-  ScalarEvolutionWrapperPass>;
+  ScalarEvolutionWrapperPass,
+  AssumptionInfoPass>;
 }
 
 INITIALIZE_PROVIDER_BEGIN(GlobalDefinedMemoryProvider,
@@ -108,6 +110,7 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DelinearizationPass)
 INITIALIZE_PASS_DEPENDENCY(GlobalsAccessWrapper)
+INITIALIZE_PASS_DEPENDENCY(AssumptionInfoPass)
 INITIALIZE_PROVIDER_END(GlobalDefinedMemoryProvider, "global-def-mem-provider",
                         "Global Defined Memory Analysis (Provider)")
 
@@ -190,13 +193,15 @@ bool GlobalDefinedMemory::runOnModule(Module &SCC) {
     auto *DFF = cast<DFFunction>(RegInfo.getTopLevelRegion());
     auto &DI = Provider.get<DelinearizationPass>().getDelinearizeInfo();
     auto &SE = Provider.get<ScalarEvolutionWrapperPass>().getSE();
+    auto &AM = Provider.get<AssumptionInfoPass>().getAssumptionMap();
     DefinedMemoryInfo DefInfo;
-    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DI, SE, DL, GO, DefInfo,
+    ReachDFFwk ReachDefFwk(AT, TLI, RegInfo, DT, DI, SE, DL, AM, GO, DefInfo,
                            *Wrapper);
     solveDataFlowUpward(&ReachDefFwk, DFF);
     auto DefUseSetItr = ReachDefFwk.getDefInfo().find(DFF);
     assert(DefUseSetItr != ReachDefFwk.getDefInfo().end() &&
            "Def-use set must exist for a function!");
+    DefUseSetItr->get<DefUseSet>()->summarizeCollapsedLocations();
     Wrapper->try_emplace(F, std::move(DefUseSetItr->get<DefUseSet>()));
     LLVM_DEBUG(dbgs() << "[GLOBAL DEFINED MEMORY]: leave " << F->getName()
                       << "\n";);

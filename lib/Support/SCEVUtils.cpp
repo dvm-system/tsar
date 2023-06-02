@@ -34,6 +34,8 @@ using namespace llvm;
 using namespace tsar;
 
 namespace {
+typedef SmallVector<PointerIntPair<Type *, 1, bool>, 1> TypeQueue;
+
 static inline int sizeOfSCEV(const SCEV *S) {
   struct FindSCEVSize {
     int Size;
@@ -427,6 +429,28 @@ inline const SCEV * stripCastIfNot(const SCEV *S, bool IsSafeTypeCast) {
       S = Cast->getOperand();
   return S;
 }
+
+const SCEV *getTypeQueue(TypeQueue &TQ, const SCEV *S) {
+  while (auto Cast{dyn_cast<SCEVCastExpr>(S)}) {
+    if (isa<SCEVSignExtendExpr>(Cast))
+      TQ.emplace_back(Cast->getType(), true);
+    else
+      TQ.emplace_back(Cast->getType(), false);
+    S = Cast->getOperand();
+  }
+  return S;
+};
+
+const SCEV *restoreCasts(const TypeQueue &TQ,
+                         const SCEV *S,
+                         ScalarEvolution *SE) {
+  assert(S && "SCEV must be specified!");
+  assert(SE && "ScalarEvolution must be specified!");
+  for (auto &T : reverse(TQ))
+    S = T.getInt() ? SE->getTruncateOrSignExtend(S, T.getPointer()) :
+                     SE->getTruncateOrZeroExtend(S, T.getPointer());
+  return S;
+}
 }
 
 namespace tsar {
@@ -618,4 +642,137 @@ std::vector<std::size_t> countPrimeNumbers(std::size_t Bound) {
   return Primes;
 }
 
+const SCEV *subtractSCEVAndCast(const SCEV *LHS,
+                                const SCEV *RHS,
+                                ScalarEvolution *SE) {
+  assert(SE && "ScalarEvolution must be specified!");
+  assert(LHS && RHS && "SCEV must be specified!");
+  TypeQueue TQLHS, TQRHS;
+  auto InnerLHS = getTypeQueue(TQLHS, LHS);
+  auto InnerRHS = getTypeQueue(TQRHS, RHS);
+  if (TQLHS != TQRHS) {
+    auto LC = dyn_cast<SCEVConstant>(InnerLHS);
+    auto RC = dyn_cast<SCEVConstant>(InnerRHS);
+    if (LC && RC) {
+      llvm_unreachable("Subtract constant SCEVs with a different cast.");
+    } else if (LC && !RC) {
+      InnerLHS = SE->getConstant(InnerRHS->getType(),
+          LC->getAPInt().getSExtValue());
+      return restoreCasts(TQRHS, SE->getMinusSCEV(InnerLHS, InnerRHS), SE);
+    } else if (!LC && RC) {
+      InnerRHS = SE->getConstant(InnerLHS->getType(),
+          RC->getAPInt().getSExtValue());
+      return restoreCasts(TQLHS, SE->getMinusSCEV(InnerLHS, InnerRHS), SE);
+    }
+    return SE->getMinusSCEV(LHS, RHS);
+  }
+  return restoreCasts(TQLHS, SE->getMinusSCEV(InnerLHS, InnerRHS), SE);
+}
+
+const SCEV *addSCEVAndCast(const SCEV *LHS,
+                           const SCEV *RHS,
+                           ScalarEvolution *SE) {
+  assert(SE && "ScalarEvolution must be specified!");
+  assert(LHS && RHS && "SCEV must be specified!");
+  TypeQueue TQLHS, TQRHS;
+  auto InnerLHS = getTypeQueue(TQLHS, LHS);
+  auto InnerRHS = getTypeQueue(TQRHS, RHS); 
+  if (TQLHS != TQRHS) {
+    auto LC = dyn_cast<SCEVConstant>(LHS);
+    auto RC = dyn_cast<SCEVConstant>(RHS);
+    if (LC && RC) {
+      llvm_unreachable("Add constant SCEVs with a different cast.");
+    } else if (LC && !RC) {
+      InnerLHS = SE->getConstant(InnerRHS->getType(),
+          LC->getAPInt().getSExtValue());
+      return restoreCasts(TQRHS, SE->getAddExpr(InnerLHS, InnerRHS), SE);
+    } else if (!LC && RC) {
+      InnerRHS = SE->getConstant(InnerLHS->getType(),
+          RC->getAPInt().getSExtValue());
+      return restoreCasts(TQLHS, SE->getAddExpr(InnerLHS, InnerRHS), SE);
+    }
+    return SE->getAddExpr(LHS, RHS);
+  }
+  return restoreCasts(TQLHS, SE->getAddExpr(InnerLHS, InnerRHS), SE);
+}
+
+const SCEV *addOneToSCEV(const SCEV *S, ScalarEvolution *SE) {
+  return addSCEVAndCast(S, SE->getOne(S->getType()), SE);
+}
+
+const SCEV *subtractOneFromSCEV(const SCEV *S, ScalarEvolution *SE) {
+  return subtractSCEVAndCast(S, SE->getOne(S->getType()), SE);
+}
+
+const SCEV *evaluateAtIteration(const SCEVAddRecExpr *ARE, const SCEV *It,
+                                ScalarEvolution *SE) {
+  assert(SE && "ScalarEvolution must be specified!");
+  assert(ARE && "SCEVAddRecExpr must be specified!");
+  auto *S = ARE->evaluateAtIteration(It, *SE);
+  if (auto Add{dyn_cast<SCEVAddExpr>(S)})
+    S = addSCEVAndCast(Add->getOperand(0), Add->getOperand(1), SE);
+  return S;
+}
+
+Optional<int64_t> compareSCEVs(const SCEV *LHS, const SCEV *RHS,
+                               ScalarEvolution *SE) {
+  assert(SE && "ScalarEvolution must be specified!");
+  assert(LHS && RHS && "SCEV must be specified!");
+  if (LHS == RHS)
+    return 0;
+  TypeQueue TQLHS, TQRHS;
+  auto InnerLHS = getTypeQueue(TQLHS, LHS);
+  auto InnerRHS = getTypeQueue(TQRHS, RHS);
+  if (TQLHS != TQRHS) {
+    // For cases like LHS = { zext(%v) - Const1 }, RHS = { zext(%v - Const2) }
+    // TODO (yukki.lapenko@gmail.com): can we extend this check for sext?
+    if (isa<SCEVZeroExtendExpr>(LHS) && isa<SCEVAddExpr>(RHS) ||
+        isa<SCEVAddExpr>(LHS) && isa<SCEVZeroExtendExpr>(RHS)) {
+      int SwapMult = 1;
+      auto First{LHS}, Second{RHS};
+      // Let the first SCEV be of kind { zext(%v) - Const1 } and the second
+      // be of kind { zext(%v - Const2) }.
+      if (isa<SCEVZeroExtendExpr>(LHS) && isa<SCEVAddExpr>(RHS)) {
+        std::swap(First, Second);
+        SwapMult = -1;
+      }
+      auto *FirstAdd = cast<SCEVAddExpr>(First);
+      auto *FirstOp0 = FirstAdd->getOperand(0);
+      auto *FirstOp1 = FirstAdd->getOperand(1);
+      // Let the first operand always be a non-constant value.
+      if (isa<SCEVConstant>(FirstOp0))
+        std::swap(FirstOp0, FirstOp1);
+      auto *FirstCast = dyn_cast<SCEVZeroExtendExpr>(FirstOp0);
+      if (!FirstCast)
+        return None;
+      auto *FirstVar = FirstCast->getOperand();
+      if (!isa<SCEVUnknown>(FirstVar))
+        return None;
+      auto *SecondCast = dyn_cast<SCEVZeroExtendExpr>(Second);
+      if (!SecondCast || !isa<SCEVAddExpr>(SecondCast->getOperand()))
+        return None;
+      auto *SecondAdd = cast<SCEVAddExpr>(SecondCast->getOperand());
+      auto *SecondOp0 = SecondAdd->getOperand(0);
+      auto *SecondOp1 = SecondAdd->getOperand(1);
+      if (isa<SCEVConstant>(SecondOp0))
+        std::swap(SecondOp0, SecondOp1);
+      if (!isa<SCEVUnknown>(SecondOp0))
+        return None;
+      auto FirstVarVal = cast<SCEVUnknown>(FirstVar)->getValue();
+      auto FirstConst = cast<SCEVConstant>(FirstOp1)->getAPInt().getSExtValue();
+      auto SecondVarVal = cast<SCEVUnknown>(SecondOp0)->getValue();
+      auto SecondConst =
+          cast<SCEVConstant>(SecondOp1)->getAPInt().getSExtValue();
+      if (FirstVarVal == SecondVarVal)
+        return (FirstConst - SecondConst) * SwapMult;
+    }
+    return None;
+  }
+  if (InnerLHS == InnerRHS)
+    return 0;
+  auto Const = SE->computeConstantDifference(InnerLHS, InnerRHS);
+  if (Const)
+    return Const->getSExtValue();
+  return None;
+}
 }

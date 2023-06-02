@@ -106,5 +106,13 @@ void initializePointerScalarizerPassPass(PassRegistry &Registry);
 
 /// Create a pass which attempts to promote pointer values to registers.
 FunctionPass *createPointerScalarizerPass();
+
+/// Initialize a pass that replaces the always true conditional branch
+/// instructions with an unconditional branch instruction.
+void initializeRedundantEdgeEliminationPassPass(PassRegistry &Registry);
+
+/// Create a pass that replaces the always true conditional branch
+/// instructions with an unconditional branch instruction.
+FunctionPass *createRedundantEdgeEliminationPass();
 }
 #endif//TSAR_IR_TRANSFORM_PASSES_H
