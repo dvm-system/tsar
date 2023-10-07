@@ -1,6 +1,10 @@
 #include "tsar/Analysis/PDG.h"
 #include "tsar/Support/PassGroupRegistry.h"
 #include "tsar/Core/Query.h"
+#include <llvm/ADT/iterator.h>
+#include <llvm/IR/Dominators.h>
+#include <llvm/Analysis/CFGPrinter.h>
+#include <llvm/Analysis/DomPrinter.h>
 #include <llvm/Support/GenericDomTreeConstruction.h>
 #include <llvm/Support/GraphWriter.h>
 #include <set>
@@ -11,6 +15,94 @@ using namespace llvm;
 using namespace clang;
 using namespace std;
 
+namespace llvm {
+template<>
+struct DOTGraphTraits<Function*>
+		: public DOTGraphTraits<DOTFuncInfo*> {
+	DOTGraphTraits(bool isSimple=false) : DOTGraphTraits<DOTFuncInfo*>(isSimple) {}
+	string getNodeLabel(const BasicBlock *Node, Function*) {
+		return DOTGraphTraits<DOTFuncInfo*>::getNodeLabel(Node, nullptr);
+	}
+	string getNodeAttributes(const BasicBlock *Node, Function *F) {
+		DOTFuncInfo DOTInfo(F);
+		return DOTGraphTraits<DOTFuncInfo*>::getNodeAttributes(Node, &DOTInfo);
+	}
+	string getEdgeAttributes(const BasicBlock *Node,
+			const_succ_iterator EdgeIt, Function *F) {
+		DOTFuncInfo DOTInfo(F);
+		return DOTGraphTraits<DOTFuncInfo*>::getEdgeAttributes(Node, EdgeIt, &DOTInfo);
+	}
+	bool isNodeHidden(const BasicBlock *Node, const Function *F) {
+		DOTFuncInfo DOTInfo(F);
+		return DOTGraphTraits<DOTFuncInfo*>::isNodeHidden(Node, &DOTInfo);
+	}
+};
+
+template<> struct GraphTraits<DomTreeNodeBase<tsar::SourceCFGNode>*>
+		: public DomTreeGraphTraitsBase<DomTreeNodeBase<tsar::SourceCFGNode>,
+		DomTreeNodeBase<tsar::SourceCFGNode>::const_iterator> {};
+
+template<> struct GraphTraits<const DomTreeNodeBase<tsar::SourceCFGNode>*>
+		: public DomTreeGraphTraitsBase<const DomTreeNodeBase<tsar::SourceCFGNode>,
+		DomTreeNodeBase<tsar::SourceCFGNode>::const_iterator> {};
+
+template<typename NodeValueType>
+struct GraphTraits<PostDomTreeBase<NodeValueType>*>
+		: public GraphTraits<DomTreeNodeBase<NodeValueType>*> {
+private:
+	using BaseGT=GraphTraits<DomTreeNodeBase<NodeValueType>*>;
+public:
+	static typename BaseGT::NodeRef getEntryNode(PostDomTreeBase<NodeValueType> *PDT) {
+		PDT->getRootNode();
+	}
+	static typename BaseGT::nodes_iterator nodes_begin(PostDomTreeBase<NodeValueType> *PDT) {
+		return df_begin(getEntryNode(PDT));
+	}
+	static typename BaseGT::nodes_iterator nodes_end(PostDomTreeBase<NodeValueType> *PDT) {
+		return df_end(getEntryNode(PDT));
+	}
+};
+
+template<typename NodeValueType>
+struct DOTGraphTraits<PostDomTreeBase<NodeValueType>*>
+		: public DOTGraphTraits<typename PostDomTreeBase<NodeValueType>::ParentPtr> {
+private:
+	using BaseDOTGT=DOTGraphTraits<typename PostDomTreeBase<NodeValueType>::ParentPtr>;
+public:
+	DOTGraphTraits(bool IsSimple=false) : BaseDOTGT(IsSimple) {}
+	static std::string getGraphName(const PostDomTreeBase<NodeValueType> *Tree) {
+		return "Post-Dominator Tree";
+	}
+	std::string getNodeLabel(DomTreeNodeBase<NodeValueType> *Node,
+			PostDomTreeBase<NodeValueType> *Tree) {
+		if (Tree->isVirtualRoot(Node))
+			return "Virtual Root";
+		else
+			return BaseDOTGT::getNodeLabel(Node->getBlock(), Node->getBlock()->getParent());
+			
+	}
+	std::string getEdgeSourceLabel(DomTreeNodeBase<NodeValueType> *Node,
+			typename GraphTraits<PostDomTreeBase<NodeValueType>*>::ChildIteratorType It) { return ""; }
+	static bool isNodeHidden(DomTreeNodeBase<NodeValueType> *Node,
+			PostDomTreeBase<NodeValueType> *Tree) {
+		return false;
+	}
+	std::string getNodeAttributes(DomTreeNodeBase<NodeValueType> *Node,
+			PostDomTreeBase<NodeValueType> *Tree) {
+		if (Tree->isVirtualRoot(Node))
+			return "";
+		else
+			return BaseDOTGT::getNodeAttributes(Node->getBlock(), Node->getBlock()->getParent());
+	}
+	std::string getEdgeAttributes(DomTreeNodeBase<NodeValueType>*,
+			typename GraphTraits<PostDomTreeBase<NodeValueType>*>::ChildIteratorType,
+			PostDomTreeBase<NodeValueType>*) {
+		return "";
+	}
+};
+}; //namespace llvm
+
+namespace {
 template<typename KeyT, typename ValueT, typename Container>
 void addToMap(map<KeyT, Container> &Map, KeyT Key, ValueT Value) {
 	auto It=Map.find(Key);
@@ -20,125 +112,175 @@ void addToMap(map<KeyT, Container> &Map, KeyT Key, ValueT Value) {
 		Map.insert({Key, {Value}});
 }
 
-inline void PDGBuilder::processControlDependence() {
-	map<SourceCFGNode*, set<SourceCFGNode*>> DependenceInfo;
-	for (auto SourceNodeIt=++df_begin(getRealRoot());
-    SourceNodeIt!=df_end(getRealRoot()); ++SourceNodeIt)
-		for (auto TargetNodeIt=++df_begin(SourceNodeIt->getIDom());
-      TargetNodeIt!=df_end(SourceNodeIt->getIDom()); ++TargetNodeIt)
-			if (SourceNodeIt->getBlock()->hasEdgeTo(*TargetNodeIt->getBlock())
-				/*
-        && !( (SourceNodeIt->getBlock()->getKind()==
-        SourceCFGNode::NodeKind::Service
-				&& ((ServiceNode*)SourceNodeIt->getBlock())->getType()!=
-        ServiceNode::NodeType::GraphEntry)
-				|| (TargetNodeIt->getBlock()->getKind()==
-        SourceCFGNode::NodeKind::Service
-				&& ((ServiceNode*)TargetNodeIt->getBlock())->getType()!=
-        ServiceNode::NodeType::GraphEntry) )
-        */
-        )
+template<typename NodeType>
+bool hasEdgesTo(NodeType *SourceN, NodeType *TargetN) {
+	for (auto ChildNodeIt=GraphTraits<NodeType*>::child_begin(SourceN);
+		ChildNodeIt!=GraphTraits<NodeType*>::child_end(SourceN); ++ChildNodeIt)
+		if (*ChildNodeIt==TargetN)
+			return true;
+	return false;
+}
+}; //anonymous namespace
+
+template<typename CDGType>
+inline void CDGBuilder<CDGType>::processControlDependence() {
+	map<typename CDGType::NodeType*, set<NodeValueType>> DependenceInfo;
+	for (auto NIt=GraphTraits<CFGType*>::nodes_begin(mCFG); NIt!=GraphTraits<CFGType*>::nodes_end(mCFG); ++NIt)
+		mCDG->emplaceNode(*NIt);
+	for (auto SourceNodeIt=++df_begin(mPDT.getRootNode()); SourceNodeIt!=df_end(mPDT.getRootNode()); ++SourceNodeIt) {
+		if (SourceNodeIt->getBlock()==GraphTraits<CFGType*>::getEntryNode(mCFG))
+			for (unsigned I=SourceNodeIt.getPathLength()-1; I>0; --I)
+				addToMap(DependenceInfo, mCDG->getEntryNode(), SourceNodeIt.getPath(I)->getBlock());
+		for (auto TargetNodeIt=++df_begin(SourceNodeIt->getIDom()); TargetNodeIt!=df_end(SourceNodeIt->getIDom()); ++TargetNodeIt)
+			if (hasEdgesTo(SourceNodeIt->getBlock(), TargetNodeIt->getBlock()))
 				for (unsigned I=TargetNodeIt.getPathLength()-1; I>0; --I)
-					addToMap(DependenceInfo, SourceNodeIt->getBlock(),
-              TargetNodeIt.getPath(I)->getBlock());
-	for (auto N : *mSCFG)
-		if (!(N->getKind()==SourceCFGNode::NodeKind::Service &&
-      ((ServiceSCFGNode*)N)->getType()!=ServiceSCFGNode::NodeType::GraphEntry))
-			mPDG->emplaceNode(N);
+					addToMap(DependenceInfo, mCDG->getNode(SourceNodeIt->getBlock()), TargetNodeIt.getPath(I)->getBlock());
+	}
 	for (auto DIIt : DependenceInfo)
-		for (auto TargetNodeIt : DIIt.second) {
-			if (DIIt.first->getKind()==SourceCFGNode::NodeKind::Service
-				&& ((ServiceSCFGNode*)DIIt.first)->getType()!=
-          ServiceSCFGNode::NodeType::GraphEntry)
-				break;
-			if (!(TargetNodeIt->getKind()==SourceCFGNode::NodeKind::Service
-				&& ((ServiceSCFGNode*)TargetNodeIt)->getType()!=
-        ServiceSCFGNode::NodeType::GraphEntry))
-				mPDG->bindNodes(*mPDG->getNode(DIIt.first),
-            *mPDG->getNode(TargetNodeIt),
-            PDGEdge::EdgeKind::ControlDependence);
-		}
+		for (auto TargetNodeIt : DIIt.second)
+			mCDG->bindNodes(*DIIt.first, *mCDG->getNode(TargetNodeIt));
 }
 
-PDG *PDGBuilder::populate(SourceCFG &_SCFG) {
-	ServiceSCFGNode *EntryNode;
-	if (!_SCFG.getStopNode())
-		return nullptr;
-	mPDG=new tsar::PDG(string(_SCFG.getName()), &_SCFG);
-	mSCFG=&_SCFG;
-	mSCFG->emplaceEntryNode();
-	mSCFG->recalculatePredMap();
-  mSPDT=PostDomTreeBase<SourceCFGNode>();
-  mSPDT.recalculate(*mSCFG);
-	/*May be useful
-  dumpDotGraphToFile(mSPDT, "post-dom-tree.dot", "post-dom-tree");
-  */
+template<typename CDGType>
+CDGType *CDGBuilder<CDGType>::populate(CFGType &CFG) {
+	mCFG=&CFG;
+	mCDG=new CDGType(string(CFG.getName()), &CFG);
+	mPDT=PostDomTreeBase<CFGNodeType>();
+	mPDT.recalculate(*mCFG);
+	/*May be useful*/
+	dumpDotGraphToFile(&mPDT, "post-dom-tree.dot", "post-dom-tree");
+	/**/
 	processControlDependence();
-	return mPDG;
+	return mCDG;
 }
 
-char PDGPass::ID=0;
+template<> char SourceCDGPass::ID=0;
 
-INITIALIZE_PASS_BEGIN(PDGPass, "pdg",
-	"Program Dependency Graph", false, true)
+INITIALIZE_PASS_BEGIN(SourceCDGPass, "source-cdg",
+	"Control Dependence Graph from source code", false, true)
 INITIALIZE_PASS_DEPENDENCY(ClangSourceCFGPass)
-INITIALIZE_PASS_END(PDGPass, "pdg",
-	"Program Dependency Graph", false, true)
+INITIALIZE_PASS_END(SourceCDGPass, "source-cdg",
+	"Control Dependence Graph from source code", false, true)
 
-FunctionPass *createPDGPass() { return new PDGPass; }
+FunctionPass *createSourceCDGPass() { return new SourceCDGPass; }
 
-void PDGPass::getAnalysisUsage(AnalysisUsage &AU) const {
+template<>
+void SourceCDGPass::getAnalysisUsage(AnalysisUsage &AU) const {
 	AU.addRequired<ClangSourceCFGPass>();
 	AU.setPreservesAll();    
 }
 
-bool PDGPass::runOnFunction(Function &F) {
+template<>
+bool SourceCDGPass::runOnFunction(Function &F) {
 	releaseMemory();
-	auto &SCFGPass=getAnalysis<ClangSourceCFGPass>();
-	mPDG=mPDGBuilder.populate(SCFGPass.getSourceCFG());
+	ClangSourceCFGPass &SCFGPass=getAnalysis<ClangSourceCFGPass>();
+	SCFGPass.getSourceCFG().recalculatePredMap();
+	mCDG=mCDGBuilder.populate(SCFGPass.getSourceCFG());
+	return false;
+}
+
+template<> char IRCDGPass::ID=0;
+
+INITIALIZE_PASS_BEGIN(IRCDGPass, "llvm-ir-cdg",
+	"Control Dependence Graph from IR", false, true)
+INITIALIZE_PASS_END(IRCDGPass, "llvm-ir-cdg",
+	"Control Dependence Graph from IR", false, true)
+
+FunctionPass *createIRCDGPass() { return new IRCDGPass; }
+
+template<>
+void IRCDGPass::getAnalysisUsage(AnalysisUsage &AU) const {
+	AU.setPreservesAll();    
+}
+
+template<>
+bool IRCDGPass::runOnFunction(Function &F) {
+	releaseMemory();
+	mCDG=mCDGBuilder.populate(F);
 	return false;
 }
 
 namespace {
-struct PDGPassGraphTraits {
-	static tsar::PDG *getGraph(PDGPass *P) { return &P->getPDG(); }
+template<typename CDGType>
+struct CDGPassGraphTraits {
+	static CDGType *getGraph(CDGPass<CDGType> *P) { return &P->getCDG(); }
 };
 
-struct PDGPrinter : public DOTGraphTraitsPrinterWrapperPass<
-	PDGPass, false, tsar::PDG*,
-	PDGPassGraphTraits> {
+struct SourceCDGPrinter : public DOTGraphTraitsPrinterWrapperPass<
+	SourceCDGPass, false, ControlDependenceGraph<SourceCFG, SourceCFGNode>*,
+	CDGPassGraphTraits<ControlDependenceGraph<SourceCFG, SourceCFGNode>>> {
 	static char ID;
-	PDGPrinter() : DOTGraphTraitsPrinterWrapperPass<PDGPass, false,
-		tsar::PDG*, PDGPassGraphTraits>("pdg", ID) {
-		initializePDGPrinterPass(*PassRegistry::getPassRegistry());
+	SourceCDGPrinter() : DOTGraphTraitsPrinterWrapperPass<SourceCDGPass, false,
+		ControlDependenceGraph<SourceCFG, SourceCFGNode>*,
+		CDGPassGraphTraits<ControlDependenceGraph<SourceCFG, SourceCFGNode>>>("source-cdg", ID) {
+		initializeSourceCDGPrinterPass(*PassRegistry::getPassRegistry());
 	}
 };
-char PDGPrinter::ID = 0;
+char SourceCDGPrinter::ID = 0;
 
-struct PDGViewer : public DOTGraphTraitsViewerWrapperPass<
-	PDGPass, false, tsar::PDG*,
-	PDGPassGraphTraits> {
+struct SourceCDGViewer : public DOTGraphTraitsViewerWrapperPass<
+	SourceCDGPass, false, ControlDependenceGraph<SourceCFG, SourceCFGNode>*,
+	CDGPassGraphTraits<ControlDependenceGraph<SourceCFG, SourceCFGNode>>> {
 	static char ID;
-	PDGViewer() : DOTGraphTraitsViewerWrapperPass<PDGPass, false,
-		tsar::PDG*, PDGPassGraphTraits>("pdg", ID) {
-		initializePDGViewerPass(*PassRegistry::getPassRegistry());
+	SourceCDGViewer() : DOTGraphTraitsViewerWrapperPass<SourceCDGPass, false,
+		ControlDependenceGraph<SourceCFG, SourceCFGNode>*,
+		CDGPassGraphTraits<ControlDependenceGraph<SourceCFG, SourceCFGNode>>>("source-cdg", ID) {
+		initializeSourceCDGViewerPass(*PassRegistry::getPassRegistry());
 	}
 };
-char PDGViewer::ID = 0;
+char SourceCDGViewer::ID = 0;
+
+struct IRCDGPrinter : public DOTGraphTraitsPrinterWrapperPass<
+	IRCDGPass, false, ControlDependenceGraph<Function, BasicBlock>*,
+	CDGPassGraphTraits<ControlDependenceGraph<Function, BasicBlock>>> {
+	static char ID;
+	IRCDGPrinter() : DOTGraphTraitsPrinterWrapperPass<IRCDGPass, false,
+		ControlDependenceGraph<Function, BasicBlock>*,
+		CDGPassGraphTraits<ControlDependenceGraph<Function, BasicBlock>>>("ir-cdg", ID) {
+		initializeIRCDGPrinterPass(*PassRegistry::getPassRegistry());
+	}
+};
+char IRCDGPrinter::ID = 0;
+
+struct IRCDGViewer : public DOTGraphTraitsViewerWrapperPass<
+	IRCDGPass, false, ControlDependenceGraph<Function, BasicBlock>*,
+	CDGPassGraphTraits<ControlDependenceGraph<Function, BasicBlock>>> {
+	static char ID;
+	IRCDGViewer() : DOTGraphTraitsViewerWrapperPass<IRCDGPass, false,
+		ControlDependenceGraph<Function, BasicBlock>*,
+		CDGPassGraphTraits<ControlDependenceGraph<Function, BasicBlock>>>("ir-cdg", ID) {
+		initializeIRCDGViewerPass(*PassRegistry::getPassRegistry());
+	}
+};
+char IRCDGViewer::ID = 0;
 } //anonymous namespace
 
-INITIALIZE_PASS_IN_GROUP(PDGViewer, "view-pdg",
-	"View Program Dependency Graph", true, true,
+INITIALIZE_PASS_IN_GROUP(SourceCDGViewer, "view-source-cdg",
+	"View Control Dependence Graph from source code", true, true,
+	DefaultQueryManager::OutputPassGroup::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP(SourceCDGPrinter, "print-source-cdg",
+	"Print Control Dependence Graph from source code", true, true,
 	DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
-INITIALIZE_PASS_IN_GROUP(PDGPrinter, "print-pdg",
-	"Print Program Dependency Graph", true, true,
+INITIALIZE_PASS_IN_GROUP(IRCDGViewer, "view-ir-cdg",
+	"View Control Dependence Graph from LLVM IR", true, true,
+	DefaultQueryManager::OutputPassGroup::getPassRegistry())
+INITIALIZE_PASS_IN_GROUP(IRCDGPrinter, "print-ir-cdg",
+	"Print Control Dependence Graph from LLVM IR", true, true,
 	DefaultQueryManager::OutputPassGroup::getPassRegistry())
 
-FunctionPass *llvm::createPDGPrinter() {
-  return new PDGPrinter;
+FunctionPass *llvm::createSourceCDGPrinter() {
+	return new SourceCDGPrinter;
 }
 
-FunctionPass *llvm::createPDGViewer() {
-  return new PDGViewer;
+FunctionPass *llvm::createSourceCDGViewer() {
+	return new SourceCDGViewer;
+}
+
+FunctionPass *llvm::createIRCDGPrinter() {
+	return new IRCDGPrinter;
+}
+
+FunctionPass *llvm::createIRCDGViewer() {
+	return new IRCDGViewer;
 }

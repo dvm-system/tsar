@@ -183,27 +183,7 @@ void WrapperNodeOp::print(StmtStringType &ResStr) const {
 	}
 }
 
-void SourceCFGNode::destroy() {
-	switch (mKind) {
-		case NodeKind::Default:
-			delete (DefaultSCFGNode*)this;
-			break;
-		case NodeKind::Service:
-			delete (ServiceSCFGNode*)this;
-			break;
-	}
-}
-
 SourceCFGNode::operator std::string() const {
-	switch (mKind) {
-		case NodeKind::Default:
-			return (string)(*(DefaultSCFGNode*)this);
-		case NodeKind::Service:
-			return (string)(*(ServiceSCFGNode*)this);
-	}
-}
-
-DefaultSCFGNode::operator string() const {
 	string ResStr;
 	for (NodeOp *NO : mBlock) {
 		NO->print(ResStr);
@@ -221,9 +201,7 @@ void SourceCFG::deleteNode(SourceCFGNode &_Node) {
 		E->destroy();
 	if (mStartNode==&_Node)
 		mStartNode=nullptr;
-	if (mStopNode==&_Node)
-		mStopNode==nullptr;
-	_Node.destroy();
+	delete &_Node;
 }
 
 void SourceCFG::deleteEdge(SourceCFGEdge &_Edge) {
@@ -244,10 +222,10 @@ void SourceCFGNode::merge(SourceCFGNode &NodeToAttach) {
 }
 */
 
-DefaultSCFGNode *SourceCFG::splitNode(DefaultSCFGNode &Node, int It) {
+SourceCFGNode *SourceCFG::splitNode(SourceCFGNode &Node, int It) {
 	if (It==0)
 		return &Node;
-	DefaultSCFGNode *NewNode=&emplaceNode();
+	SourceCFGNode *NewNode=&emplaceNode();
 	for (auto E : Node.getEdges())
 		NewNode->addEdge(*E);
 	Node.clear();
@@ -295,7 +273,7 @@ void SourceCFG::mergeNodes(SourceCFGNode &AbsorbNode,
 		}
 	//AbsorbNode.merge(OutgoingNode); - Not working
 	SourceCFGBase::removeNode(OutgoingNode);
-	OutgoingNode.destroy();
+	delete &OutgoingNode;
 }
 
 void markReached(SourceCFGNode *Node,
@@ -325,14 +303,14 @@ void SourceCFGBuilder::eliminateUnreached() {
 	std::map<SourceCFGNode*, bool> ReachedNodes;
 	for (auto N : *mSCFG)
 		ReachedNodes.insert({N, false});
-	markReached(mSCFG->getStartNode(), &ReachedNodes);
+	markReached(mSCFG->getEntryNode(), &ReachedNodes);
 	for (auto It : ReachedNodes)
 		if (!It.second)
 			mSCFG->deleteNode(*It.first);
 }
 
 void SourceCFGBuilder::processLabels() {
-	std::map<LabelInfo, std::vector<pair<DefaultSCFGNode*,
+	std::map<LabelInfo, std::vector<pair<SourceCFGNode*,
       SwitchCase*>>> OrderingMap;
 	for (auto GotoIt : mGotos)
 		addToMap(OrderingMap, mLabels[GotoIt.first], pair{GotoIt.second, nullptr});
@@ -355,14 +333,9 @@ SourceCFG *SourceCFGBuilder::populate(FunctionDecl *Decl) {
 		mSCFG=new SourceCFG(Info.getAsString());
 		mDirectOut.push_back(MarkedOutsType());
 		parseStmt(Decl->getBody());
-		if (mEntryNode) {
-			mSCFG->bindNodes(*mSCFG->getStartNode(), *mEntryNode);
-			for (auto It : mDirectOut.back())
-				mSCFG->bindNodes(*It.first, *mSCFG->getStopNode(), It.second);
+		mSCFG->mStartNode=mEntryNode;
+		if (mEntryNode)
 			processLabels();
-		}
-		else
-			mSCFG->bindNodes(*mSCFG->getStartNode(), *mSCFG->getStopNode());
 		mDirectOut.pop_back();
 		eliminateUnreached();
 	}
@@ -471,13 +444,13 @@ void SourceCFGBuilder::processIndirect(SourceCFGNode *CondStartNode) {
 
 void SourceCFGBuilder::parseExpr(clang::DynTypedNode Op, NodeOp *ParentOp,
 		bool isFirstCall) {
-	DefaultSCFGNode *OldNodeToAdd;
+	SourceCFGNode *OldNodeToAdd;
 	WrapperNodeOp *NewNodeOp;
 	if (Op.get<Stmt>()) {
 		Stmt::StmtClass Type=Op.getUnchecked<Stmt>().getStmtClass();
 		if (Op.get<ConditionalOperator>()) {
 			MarkedOutsType UpperOuts;
-			DefaultSCFGNode *ConditionNode, *TrueNode, *FalseNode;
+			SourceCFGNode *ConditionNode, *TrueNode, *FalseNode;
 			const ConditionalOperator &CO=Op.getUnchecked<ConditionalOperator>();
 			auto OldEntryNode=mEntryNode;
 			auto OldTreeTopParentPtr=mTreeTopParentPtr;
@@ -587,7 +560,7 @@ void SourceCFGBuilder::parseExpr(clang::DynTypedNode Op, NodeOp *ParentOp,
 
 void SourceCFGBuilder::parseCompoundStmt(CompoundStmt *Root) {
 	MarkedOutsType UpperOuts;
-	DefaultSCFGNode *ResultEntryNode=mEntryNode;
+	SourceCFGNode *ResultEntryNode=mEntryNode;
 	mDirectOut.push_back(MarkedOutsType());
 	for (auto S : Root->body()) {
 		parseStmt(S);
@@ -602,7 +575,7 @@ void SourceCFGBuilder::parseCompoundStmt(CompoundStmt *Root) {
 }
 
 void SourceCFGBuilder::parseDoStmt(DoStmt *Root) {
-	DefaultSCFGNode *mStartNode=mNodeToAdd, *CondStartNode, *CondEndNode, *Body;
+	SourceCFGNode *mStartNode=mNodeToAdd, *CondStartNode, *CondEndNode, *Body;
 	mContinueOut.push(OutsType());
 	mBreakOut.push(OutsType());
 	mDirectOut.push_back(MarkedOutsType());
@@ -636,7 +609,7 @@ void SourceCFGBuilder::parseDoStmt(DoStmt *Root) {
 }
 
 void SourceCFGBuilder::parseForStmt(ForStmt *Root) {
-	DefaultSCFGNode *mStartNode=mNodeToAdd, *CondStartNode=nullptr,
+	SourceCFGNode *mStartNode=mNodeToAdd, *CondStartNode=nullptr,
 		*CondEndNode=nullptr, *Body=nullptr, *IncStartNode=nullptr, *LoopNode;
 	MarkedOutsType AfterInitOuts;
 	mContinueOut.push(OutsType());
@@ -696,7 +669,7 @@ void SourceCFGBuilder::parseForStmt(ForStmt *Root) {
 
 void SourceCFGBuilder::parseSwitchStmt(SwitchStmt *Root) {
 	mBreakOut.push(OutsType());
-	DefaultSCFGNode *CondStartNode=mNodeToAdd, *CondEndNode;
+	SourceCFGNode *CondStartNode=mNodeToAdd, *CondEndNode;
 	parseExpr(DynTypedNode::create(*Root->getCond()), new WrapperNodeOp(Root),
       true);
 	CondEndNode=mNodeToAdd;
@@ -713,7 +686,7 @@ void SourceCFGBuilder::parseWhileStmt(WhileStmt *Root) {
 	mContinueOut.push(OutsType());
 	mBreakOut.push(OutsType());
 	mDirectOut.push_back(MarkedOutsType());
-	DefaultSCFGNode *mStartNode=mNodeToAdd, *CondStartNode, *CondEndNode;
+	SourceCFGNode *mStartNode=mNodeToAdd, *CondStartNode, *CondEndNode;
 	if (mStartNode->size()==0) {
 		CondStartNode=mStartNode;
 		parseExpr(DynTypedNode::create(*Root->getCond()), new WrapperNodeOp(Root),
@@ -744,7 +717,7 @@ void SourceCFGBuilder::parseWhileStmt(WhileStmt *Root) {
 
 void SourceCFGBuilder::parseIfStmt(IfStmt *Root) {
 	MarkedOutsType UpperOuts;
-	DefaultSCFGNode *CondStartNode=mNodeToAdd, *CondEndNode;
+	SourceCFGNode *CondStartNode=mNodeToAdd, *CondEndNode;
 	Stmt *ActionStmt;
 	parseExpr(DynTypedNode::create(*Root->getCond()), new WrapperNodeOp(Root),
       true);
@@ -815,7 +788,7 @@ void SourceCFGBuilder::parseReturnStmt(ReturnStmt *Root) {
         new WrapperNodeOp(Root), true);
 	else
 		mNodeToAdd->addOp(new NativeNodeOp(Root));
-	mSCFG->bindNodes(*mNodeToAdd, *mSCFG->getStopNode());
+	//mSCFG->bindNodes(*mNodeToAdd, *mSCFG->getStopNode());
 	mDirectOut.back().erase(mNodeToAdd);
 	mNodeToAdd=nullptr;
 }

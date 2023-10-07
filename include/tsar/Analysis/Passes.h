@@ -118,22 +118,40 @@ ModulePass *createAnalysisCloseConnectionPass(bool ActiveOnly = false);
 /// be blocked until server confirms that connection can be closed.
 ModulePass *createAnalysisCloseConnectionPass(const void * ServerID);
 
-/// Initialize a pass to build program dependency graph.
-void initializePDGPassPass(PassRegistry &Registry);
+/// Initialize a pass to build control dependence graph from source code.
+void initializeSourceCDGPassPass(PassRegistry &Registry);
 
-/// Create a pass to build program dependency graph.
-FunctionPass *createPDGPass();
+/// Create a pass to build control dependence graph from source code.
+FunctionPass *createSourceCDGPass();
 
-/// Initialize a pass to print program dependency graph to 'dot' file.
-void initializePDGPrinterPass(PassRegistry &Registry);
+/// Initialize a pass to print control dependence graph from source code to 'dot' file.
+void initializeSourceCDGPrinterPass(PassRegistry &Registry);
 
-/// Create a pass to print program dependency to 'dot' file.
-FunctionPass *createPDGPrinter();
+/// Create a pass to print control dependence graph from source code to 'dot' file.
+FunctionPass *createSourceCDGPrinter();
 
-/// Initialize a pass to display program dependency graph.
-void initializePDGViewerPass(PassRegistry &Registry);
+/// Initialize a pass to display control dependence graph from source code.
+void initializeSourceCDGViewerPass(PassRegistry &Registry);
 
-/// Create a pass to display program dependency graph.
-FunctionPass *createPDGViewer();
+/// Create a pass to display control dependence graph from source code.
+FunctionPass *createSourceCDGViewer();
+
+/// Initialize a pass to build control dependence graph from LLVM IR.
+void initializeIRCDGPassPass(PassRegistry &Registry);
+
+/// Create a pass to build control dependence graph from LLVM IR.
+FunctionPass *createIRCDGPass();
+
+/// Initialize a pass to print control dependence graph from LLVM IR to 'dot' file.
+void initializeIRCDGPrinterPass(PassRegistry &Registry);
+
+/// Create a pass to print controld dependence graph from LLVM IR to 'dot' file.
+FunctionPass *createIRCDGPrinter();
+
+/// Initialize a pass to display control dependence graph from LLVM IR.
+void initializeIRCDGViewerPass(PassRegistry &Registry);
+
+/// Create a pass to display control dependence graph from LLVM IR.
+FunctionPass *createIRCDGViewer();
 }
 #endif//TSAR_ANALYSIS_PASSES_H

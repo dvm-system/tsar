@@ -79,12 +79,12 @@ public:
       Op(clang::DynTypedNode::create(*_Op)) {}
 	void print(StmtStringType &ResStr) const;
 	static bool classof(const NodeOp *Node) {
-    return Node->getKind()==NodeOpKind::Wrapper;
-  }
+		return Node->getKind()==NodeOpKind::Wrapper;
+	}
 
 	std::string getOpAddr() const {
 		return "0x"+(std::stringstream()<<std::hex<<
-      (long unsigned)&Op.getUnchecked<clang::Stmt>()).str();
+      		(long unsigned)&Op.getUnchecked<clang::Stmt>()).str();
 	}
 
 	~WrapperNodeOp() {
@@ -104,8 +104,8 @@ public:
 	NativeNodeOp(clang::VarDecl *_Op) : NodeOp(NodeOpKind::Native),
       Op(clang::DynTypedNode::create(*_Op)) {}
 	NativeNodeOp(const WrapperNodeOp &WNO) : NodeOp(WNO), Op(WNO.Op) {
-    mKind=NodeOpKind::Native;
-  }
+		mKind=NodeOpKind::Native;
+	}
 	static bool classof(const NodeOp *Node) {
 		return Node->getKind()==NodeOpKind::Native;
 	}
@@ -115,7 +115,7 @@ public:
 		printRefDecl(ResStr);
 		if (Op.get<clang::Stmt>()) {
 			Op.getUnchecked<clang::Stmt>().printPretty(StrStream, nullptr,
-          clang::PrintingPolicy(clang::LangOptions()));
+          		clang::PrintingPolicy(clang::LangOptions()));
 		}
 		else
 			Op.getUnchecked<clang::VarDecl>().print(StrStream);
@@ -123,7 +123,7 @@ public:
 
 	std::string getOpAddr() const {
 		return "0x"+(std::stringstream()<<std::hex<<
-      (long unsigned)&Op.getUnchecked<clang::Stmt>()).str();
+      		(long unsigned)&Op.getUnchecked<clang::Stmt>()).str();
 	}
 	~NativeNodeOp() = default;
 private:
@@ -135,12 +135,12 @@ class ReferenceNodeOp : public NodeOp {
 public:
 	ReferenceNodeOp(NodeOp *_mReferredNode, std::string _mReferenceName)
 		: NodeOp(NodeOpKind::Reference), mReferredNode(_mReferredNode),
-    mReferenceName(_mReferenceName) {
+    	mReferenceName(_mReferenceName) {
 		mReferredNode->mIsReferred=true;
 	}
 	static bool classof(const NodeOp *Node) {
-    return Node->getKind()==NodeOpKind::Reference;
-  }
+		return Node->getKind()==NodeOpKind::Reference;
+	}
 	void print(StmtStringType &ResStr) const {
 		ResStr+="<"+mReferenceName+mReferredNode->getOpAddr()+"_REFERRENCE_>";
 	}
@@ -215,10 +215,21 @@ private:
 
 class SourceCFGNode : public SourceCFGNodeBase {
 	friend class SourceCFG;
+	friend class SourceCFGBuilder;
 public:
-	enum class NodeKind {Default, Service};
-	SourceCFGNode(NodeKind _mKind) : mKind(_mKind) {}
-	NodeKind getKind() const { return mKind; }
+	using OpStorageType=std::vector<NodeOp*>;
+	SourceCFGNode() = default;
+	std::size_t size() const { return mBlock.size(); }
+	NodeOp &operator[](int Index) { return *mBlock[Index]; }
+	void clearBlock() {
+		for (auto Op : mBlock)
+			Op->destroy();
+		mBlock.clear();
+	}
+
+	~SourceCFGNode() {
+		clearBlock();
+	}
 
 	inline SourceCFGEdge *addNewEdge(SourceCFGNode &TargetNode,
 			SourceCFGEdge::EdgeKind Ekind) {
@@ -235,111 +246,43 @@ public:
 	SourceCFG *getParent() { return OwningGraph; }
 	explicit operator std::string() const;
 	void printAsOperand(llvm::raw_ostream &OS, bool B) {
-    OS<<operator std::string();
-  }
-	~SourceCFGNode() = default;
-	void destroy();
+    	OS<<operator std::string();
+  	}
 private:
-	NodeKind mKind;
 	SourceCFG *OwningGraph;
-};
-
-class ServiceSCFGNode : public SourceCFGNode {
-public:
-	enum class NodeType {GraphStart, GraphStop, GraphEntry};
-	ServiceSCFGNode(NodeType _mType) : SourceCFGNode(NodeKind::Service),
-      mType(_mType) {}
-	NodeType getType() const { return mType; }
-	static bool classof(const SourceCFGNode *Node) {
-    return Node->getKind()==NodeKind::Service;
-  }
-	explicit operator std::string() const {
-		switch (mType) {
-			case NodeType::GraphStart:
-				return "START";
-			case NodeType::GraphStop:
-				return "STOP";
-			case NodeType::GraphEntry:
-				return "ENTRY";
-		}
-	}
-private:
-	NodeType mType;
-};
-
-class DefaultSCFGNode : public SourceCFGNode {
-	friend class SourceCFG;
-	friend class SourceCFGBuilder;
-public:
-	using OpStorageType=std::vector<NodeOp*>;
-	DefaultSCFGNode() : SourceCFGNode(NodeKind::Default) {}
-	std::size_t size() const { return mBlock.size(); }
-	static bool classof(const SourceCFGNode *Node) {
-    return Node->getKind()==NodeKind::Default;
-  }
-	NodeOp &operator[](int Index) { return *mBlock[Index]; }
-	explicit operator std::string() const;
-
-	void clearBlock() {
-		for (auto Op : mBlock)
-			Op->destroy();
-		mBlock.clear();
-	}
-
-	~DefaultSCFGNode() {
-		clearBlock();
-	}
-
-private:
 	inline OpStorageType::iterator addOp(NodeOp *_Op) {
     mBlock.push_back(_Op);
-    return mBlock.end()-1;
-  }
+		return mBlock.end()-1;
+	}
 
 	template<typename It>
 	OpStorageType::iterator addOp(It begin, It end) {
 		for (auto I=begin; I!=end; ++I)
-      mBlock.push_back(*I);
-    return mBlock.end()-1;
+      		mBlock.push_back(*I);
+		return mBlock.end()-1;
 	}
-
 	OpStorageType mBlock;
 };
 
 class SourceCFG : public SourceCFGBase {
+	friend class SourceCFGBuilder;
 public:
 	SourceCFG(const std::string &_mFunctionName) : mFunctionName(_mFunctionName),
-		mStartNode(&emplaceNode(ServiceSCFGNode::NodeType::GraphStart)),
-		mStopNode(&emplaceNode(ServiceSCFGNode::NodeType::GraphStop)),
-		mEntryNode(nullptr) {}
+		mStartNode(nullptr) {}
 
 
 	inline bool addNode(SourceCFGNode &N) {
 		return SourceCFGBase::addNode(N)?N.OwningGraph=this, true:false;
 	}
 
-	DefaultSCFGNode &emplaceNode() {
-		DefaultSCFGNode *CurrNode=new DefaultSCFGNode();
+	SourceCFGNode &emplaceNode() {
+		SourceCFGNode *CurrNode=new SourceCFGNode();
 		addNode(*CurrNode);
 		return *CurrNode;
-	}
-
-	ServiceSCFGNode &emplaceNode(ServiceSCFGNode::NodeType Type) {
-		ServiceSCFGNode *CurrNode=new ServiceSCFGNode(Type);
-		addNode(*CurrNode);
-		return *CurrNode;
-	}
-
-	ServiceSCFGNode &emplaceEntryNode() {
-		mEntryNode=new ServiceSCFGNode(ServiceSCFGNode::NodeType::GraphEntry);
-		addNode(*mEntryNode);
-		bindNodes(*mEntryNode, *mStartNode, DefaultSCFGEdge::EdgeType::True);
-		bindNodes(*mEntryNode, *mStopNode, DefaultSCFGEdge::EdgeType::False);
-		return *mEntryNode;
 	}
 
 	inline void bindNodes(SourceCFGNode &SourceNode,
-      SourceCFGNode &TargetNode ) {
+      		SourceCFGNode &TargetNode ) {
 		connect(SourceNode, TargetNode, *(new DefaultSCFGEdge(TargetNode,
         DefaultSCFGEdge::EdgeType::Default)));
 	}
@@ -354,17 +297,13 @@ public:
 			clang::SwitchCase *Label) {
 		connect(SourceNode, TargetNode, *(new LabeledSCFGEdge(TargetNode, Label)));
 	}
-
-	inline ServiceSCFGNode *getStartNode() const { return mStartNode; }
-	inline ServiceSCFGNode *getStopNode() const { return mStopNode; }
-	inline ServiceSCFGNode *getEntryNode() const {
-    return mEntryNode?mEntryNode:mStartNode;
-  }
+	// Needed for GraphTraits<AugmentedCFG>
+	inline SourceCFGNode *getEntryNode() const { return mStartNode; }
 	inline llvm::StringRef getName() const { return mFunctionName; }
 	void mergeNodes(SourceCFGNode &AbsorbNode, SourceCFGNode &OutgoingNode);
 	void deleteNode(SourceCFGNode &_Node);
 	void deleteEdge(SourceCFGEdge &_Edge);
-	DefaultSCFGNode *splitNode(DefaultSCFGNode &Node, int It);
+	SourceCFGNode *splitNode(SourceCFGNode &Node, int It);
 	void recalculatePredMap();
 
 	std::set<SourceCFGNode*> &getPredMap(SourceCFGNode *Node) {
@@ -398,12 +337,12 @@ public:
 		for (auto N : Nodes) {
 			for (auto E : N->getEdges())
 				E->destroy();
-			N->destroy();
+			delete N;
 		}
 	}
 private:
 	std::string mFunctionName;
-	ServiceSCFGNode *mStartNode, *mStopNode, *mEntryNode;
+	SourceCFGNode *mStartNode;
 	std::map<SourceCFGNode*, std::set<SourceCFGNode*>> mPredecessorsMap;
 };
 
@@ -419,7 +358,7 @@ private:
 	using OutsType=llvm::SmallPtrSet<SourceCFGNode*, 5>;
 
 	struct LabelInfo {
-		DefaultSCFGNode *Node;
+		SourceCFGNode *Node;
 		size_t LabelIt;
 	};
 
@@ -445,15 +384,15 @@ private:
 	bool hasConditionalOperator(clang::Stmt *Root);
 	SourceCFG *mSCFG;
 	llvm::SmallDenseMap<clang::Stmt*, LabelInfo> mLabels;
-	llvm::SmallVector<std::pair<clang::Stmt*, DefaultSCFGNode*>> mGotos;
+	llvm::SmallVector<std::pair<clang::Stmt*, SourceCFGNode*>> mGotos;
 	llvm::SmallVector<std::pair<clang::SwitchCase*,
-    DefaultSCFGNode*>> mSwitchGotos;
+    SourceCFGNode*>> mSwitchGotos;
 	LabelInfo mPrevFirstLabel;
 	size_t mLastLabelIt;
-	DefaultSCFGNode *mEntryNode, *mNodeToAdd;
+	SourceCFGNode *mEntryNode, *mNodeToAdd;
 	std::vector<MarkedOutsType> mDirectOut;
 	std::stack<OutsType> mContinueOut, mBreakOut;
-	std::stack<DefaultSCFGNode*> mSwitchNodes;
+	std::stack<SourceCFGNode*> mSwitchNodes;
 	NodeOp *mTreeTopParentPtr;
 };
 } //namespace tsar
