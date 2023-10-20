@@ -17,6 +17,9 @@
 #include <map>
 #include <string>
 
+#include <llvm/Analysis/DDG.h>
+#include <llvm/Analysis/DDGPrinter.h>
+
 namespace tsar {
 
 template<typename CFGType, typename CFGNodeType>
@@ -136,6 +139,13 @@ private:
 	CFGNodeMapType BlockToNodeMap;
 	CFGType *mCFG;
 };
+
+using SourceCDG=ControlDependenceGraph<SourceCFG, SourceCFGNode>;
+using IRCDGNode=CDGNode<llvm::Function, llvm::BasicBlock>;
+using DefaultIRCDGNode=DefaultCDGNode<llvm::Function, llvm::BasicBlock>;
+using EntryIRCDGNode=EntryCDGNode<llvm::Function, llvm::BasicBlock>;
+using IRCDGEdge=CDGEdge<llvm::Function, llvm::BasicBlock>;
+using IRCDG=ControlDependenceGraph<llvm::Function, llvm::BasicBlock>;
 
 }//namespace tsar
 
@@ -280,5 +290,89 @@ using SourceCDGPass=CDGPass<tsar::ControlDependenceGraph<tsar::SourceCFG, tsar::
 using IRCDGPass=CDGPass<tsar::ControlDependenceGraph<Function, BasicBlock>>;
 
 };//namespace llvm
+
+namespace tsar {
+class ControlPDGEdge : public llvm::DDGEdge {
+public:
+	ControlPDGEdge(llvm::DDGNode &TargetNode) : llvm::DDGEdge(TargetNode, EdgeKind::Unknown) {}
+};
+
+class ProgramDependencyGraph  : public llvm::DataDependenceGraph {
+private:
+	using Base=llvm::DataDependenceGraph;
+	void construct(llvm::Function &F) {
+		//
+		for (auto INode : *this)
+			for (auto Edge : INode->getEdges())
+				assert(Edge->getKind()!=llvm::DDGEdge::EdgeKind::Unknown);
+		//
+		IRCDG *CDG=CDGBuilder<IRCDG>().populate(F);
+		std::map<llvm::Instruction*, llvm::DDGNode*> InstrMap;
+		for (auto INode : *this)
+			if (llvm::isa<llvm::SimpleDDGNode>(INode))
+				for (auto I : llvm::dyn_cast<llvm::SimpleDDGNode>(INode)->getInstructions())
+					InstrMap[I]=INode;
+		for (auto It : InstrMap)
+			if (It.first->isTerminator()) {
+				IRCDGNode *CDGNode=CDG->getNode(It.first->getParent());
+				for (auto CDGEdge : *CDGNode) {
+					//llvm::BasicBlock *TargetBB=(llvm::dyn_cast<DefaultIRCDGNode>(CDGEdge->getTargetNode())).getBlock();
+					llvm::BasicBlock *TargetBB=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock();
+					for (auto IIt=TargetBB->begin(); IIt!=TargetBB->end(); ++IIt)
+						connect(*InstrMap[It.first], *InstrMap[&(*IIt)], *(new ControlPDGEdge(*InstrMap[&(*IIt)])));
+				}
+			}
+		for (auto RootEdge : getRoot().getEdges())
+			delete RootEdge;
+		getRoot().clear();
+		for (auto CDGEdge : *(CDG->getEntryNode()))
+			//for (auto IIt=llvm::dyn_cast<DefaultIRCDGNode>(CDGEdge->getTargetNode()).getBlock()->begin();
+			for (auto IIt=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock()->begin();
+				//IIt!=llvm::dyn_cast<DefaultIRCDGNode>(&CDGEdge->getTargetNode())->getBlock()->end(); ++IIt)
+				IIt!=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock()->end(); ++IIt)
+				connect(getRoot(), *InstrMap[&(*IIt)], *(new ControlPDGEdge(*InstrMap[&(*IIt)])));
+		delete CDG;
+	}
+public:
+	ProgramDependencyGraph(llvm::Function &F, llvm::DependenceInfo &DI)
+			: Base(F, DI) {
+		construct(F);
+	}
+};
+}
+
+namespace llvm {
+template <>
+struct GraphTraits<tsar::ProgramDependencyGraph *> : public GraphTraits<DataDependenceGraph*> {};
+
+template <>
+struct GraphTraits<const tsar::ProgramDependencyGraph *> : public GraphTraits<const DataDependenceGraph*> {};
+
+template <>
+struct DOTGraphTraits<const tsar::ProgramDependencyGraph *> : public DOTGraphTraits<const DataDependenceGraph*> {
+private:
+	using GT=GraphTraits<const tsar::ProgramDependencyGraph *>;
+	using BaseDOTGT=DOTGraphTraits<const DataDependenceGraph*>;
+public:
+	DOTGraphTraits(bool isSimple=false) : BaseDOTGT(isSimple) {}
+
+	std::string getNodeLabel(const DDGNode *Node, const tsar::ProgramDependencyGraph *PDG) {
+		return BaseDOTGT::getNodeLabel(Node, PDG);
+	}
+
+	std::string getEdgeAttributes(const DDGNode *Node, typename GT::ChildIteratorType ChildNodeIt, const tsar::ProgramDependencyGraph *PDG) {
+		assert((*ChildNodeIt.getCurrent())->getKind()!=DDGEdge::EdgeKind::Rooted);
+		switch ((*ChildNodeIt.getCurrent())->getKind()) {
+			case DDGEdge::EdgeKind::Unknown:
+				return "style=\"dashed\"";
+			case DDGEdge::EdgeKind::RegisterDefUse:
+				return "style=\"solid\" color=\"blue\" "+BaseDOTGT::getEdgeAttributes(Node, ChildNodeIt, PDG);
+			case DDGEdge::EdgeKind::MemoryDependence:
+				return "style=\"solid\" color=\"green\" "+BaseDOTGT::getEdgeAttributes(Node, ChildNodeIt, PDG);
+		}
+	}
+};
+
+};
 
 #endif//TSAR_INCLUDE_BUILDPDG_H

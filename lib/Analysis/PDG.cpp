@@ -10,6 +10,12 @@
 #include <set>
 #include <string>
 
+//
+#include "tsar/Analysis/Memory/DependenceAnalysis.h"
+#include <llvm/InitializePasses.h>
+//
+#include <llvm/Support/CommandLine.h>
+
 using namespace tsar;
 using namespace llvm;
 using namespace clang;
@@ -183,6 +189,7 @@ template<> char IRCDGPass::ID=0;
 
 INITIALIZE_PASS_BEGIN(IRCDGPass, "llvm-ir-cdg",
 	"Control Dependence Graph from IR", false, true)
+INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
 INITIALIZE_PASS_END(IRCDGPass, "llvm-ir-cdg",
 	"Control Dependence Graph from IR", false, true)
 
@@ -190,6 +197,7 @@ FunctionPass *createIRCDGPass() { return new IRCDGPass; }
 
 template<>
 void IRCDGPass::getAnalysisUsage(AnalysisUsage &AU) const {
+	AU.addRequired<DependenceAnalysisWrapperPass>();
 	AU.setPreservesAll();    
 }
 
@@ -197,6 +205,24 @@ template<>
 bool IRCDGPass::runOnFunction(Function &F) {
 	releaseMemory();
 	mCDG=mCDGBuilder.populate(F);
+	{
+		auto &DIPass=getAnalysis<DependenceAnalysisWrapperPass>();
+		/*May be useful*/
+		StringMap<cl::Option*> &OpMap=cl::getRegisteredOptions();
+		bool OldDDGSimplifyOpt=((cl::opt<bool>*)OpMap["ddg-simplify"])->getValue(),
+			OldDDGPiBlocksOpt=((cl::opt<bool>*)OpMap["ddg-pi-blocks"])->getValue();
+		((cl::opt<bool>*)OpMap["ddg-simplify"])->setValue(false);
+		((cl::opt<bool>*)OpMap["ddg-pi-blocks"])->setValue(false);
+		ProgramDependencyGraph PDG(F, DIPass.getDI());
+		dumpDotGraphToFile((const ProgramDependencyGraph*)&PDG, "pdg.dot", "program dependency graph");
+		DataDependenceGraph DDG(F, DIPass.getDI());
+		dumpDotGraphToFile((const DataDependenceGraph*)&DDG, "data-dependence-graph.dot", "data dependence graph", false);
+		((cl::opt<bool>*)OpMap["ddg-simplify"])->setValue(OldDDGSimplifyOpt);
+		((cl::opt<bool>*)OpMap["ddg-pi-blocks"])->setValue(OldDDGPiBlocksOpt);
+		DOTFuncInfo DOTCFGInfo(&F);
+		dumpDotGraphToFile(&DOTCFGInfo, "ircfg.dot", "control flow graph");
+	}
+	/**/
 	return false;
 }
 
