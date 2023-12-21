@@ -190,6 +190,9 @@ template<> char IRCDGPass::ID=0;
 INITIALIZE_PASS_BEGIN(IRCDGPass, "llvm-ir-cdg",
 	"Control Dependence Graph from IR", false, true)
 INITIALIZE_PASS_DEPENDENCY(DependenceAnalysisWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(EstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(DIEstimateMemoryPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
 INITIALIZE_PASS_END(IRCDGPass, "llvm-ir-cdg",
 	"Control Dependence Graph from IR", false, true)
 
@@ -198,6 +201,9 @@ FunctionPass *createIRCDGPass() { return new IRCDGPass; }
 template<>
 void IRCDGPass::getAnalysisUsage(AnalysisUsage &AU) const {
 	AU.addRequired<DependenceAnalysisWrapperPass>();
+	AU.addRequired<EstimateMemoryPass>();
+	AU.addRequired<DIEstimateMemoryPass>();
+	AU.addRequired<TargetLibraryInfoWrapperPass>();
 	AU.setPreservesAll();    
 }
 
@@ -213,7 +219,12 @@ bool IRCDGPass::runOnFunction(Function &F) {
 			OldDDGPiBlocksOpt=((cl::opt<bool>*)OpMap["ddg-pi-blocks"])->getValue();
 		((cl::opt<bool>*)OpMap["ddg-simplify"])->setValue(false);
 		((cl::opt<bool>*)OpMap["ddg-pi-blocks"])->setValue(false);
-		ProgramDependencyGraph PDG(F, DIPass.getDI());
+		//
+		auto &EMPass=getAnalysis<EstimateMemoryPass>();
+		auto &DIEMPass=getAnalysis<DIEstimateMemoryPass>();
+		auto &mTLIPass=getAnalysis<TargetLibraryInfoWrapperPass>();
+		//
+		ProgramDependencyGraph PDG(*this, F, DIPass.getDI(), EMPass.getAliasTree(), DIEMPass.getAliasTree(), mTLIPass.getTLI(F));
 		dumpDotGraphToFile((const ProgramDependencyGraph*)&PDG, "pdg.dot", "program dependency graph");
 		DataDependenceGraph DDG(F, DIPass.getDI());
 		dumpDotGraphToFile((const DataDependenceGraph*)&DDG, "data-dependence-graph.dot", "data dependence graph", false);

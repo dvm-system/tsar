@@ -19,6 +19,24 @@
 
 #include <llvm/Analysis/DDG.h>
 #include <llvm/Analysis/DDGPrinter.h>
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Analysis/Memory/DIEstimateMemory.h"
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/IR/Dominators.h>
+
+#include "tsar/Analysis/Memory/DIClientServerInfo.h"
+#include "tsar/Analysis/Memory/MemoryAccessUtils.h"
+
+// DEBUG:
+#include <iostream>
+#include <vector>
+#include "tsar/ADT/SpanningTreeRelation.h"
+#include "tsar/Analysis/Memory/EstimateMemory.h"
+#include "tsar/Core/Query.h"
+#include "tsar/Unparse/Utils.h"
+#include <llvm/Analysis/DOTGraphTraitsPass.h>
+#include <llvm/Support/GraphWriter.h>
+
 
 namespace tsar {
 
@@ -40,14 +58,14 @@ template<typename CFGType, typename CFGNodeType>
 class CDGEdge : public CDGEdgeBase<CFGType, CFGNodeType> {
 public:
 	using NodeType=CDGNode<CFGType, CFGNodeType>;
-	CDGEdge(NodeType &_TargetNode) : CDGEdgeBase<CFGType, CFGNodeType>(_TargetNode){}
+	CDGEdge(NodeType &TargetNode) : CDGEdgeBase<CFGType, CFGNodeType>(TargetNode){}
 };
 
 template<typename CFGType, typename CFGNodeType>
 class CDGNode : public CDGNodeBase<CFGType, CFGNodeType> {
 public:
 	enum class NodeKind {Entry, Default, Region};
-	CDGNode(NodeKind _mKind) : mKind(_mKind) {}
+	CDGNode(NodeKind Kind) : mKind(Kind) {}
 	inline NodeKind getKind() const { return mKind; }
 	void destroy();
 private:
@@ -69,7 +87,7 @@ private:
 	using Base=CDGNode<CFGType, CFGNodeType>;
 public:
 	using NodeValueType=CFGNodeType*;
-	DefaultCDGNode(NodeValueType _mBlock) : Base(Base::NodeKind::Default), mBlock(_mBlock) {}
+	DefaultCDGNode(NodeValueType Block) : Base(Base::NodeKind::Default), mBlock(Block) {}
 	static bool classof(const Base *Node) { return Node->getKind()==Base::NodeKind::Default; }
 	inline NodeValueType getBlock() const { return mBlock; }
 private:
@@ -90,14 +108,14 @@ public:
 	using NodeValueType=CFGNodeType*;
 	using CFGNodeMapType=llvm::DenseMap<NodeValueType, NodeType*>;
 
-	ControlDependenceGraph(const std::string &_FunctionName, CFGType *_mCFG)
-			: FunctionName(_FunctionName), mCFG(_mCFG), mEntryNode(new EntryNode()) {
+	ControlDependenceGraph(const std::string &FunctionName, CFGType *CFG)
+			: mFunctionName(FunctionName), mCFG(CFG), mEntryNode(new EntryNode()) {
 		CDGBase<CFGType, CFGNodeType>::addNode(*mEntryNode);
 	}
 
 	inline bool addNode(DefaultNode &N) {
 		if (CDGBase<CFGType, CFGNodeType>::addNode(N)) {
-			BlockToNodeMap.insert({N.getBlock(), &N});
+			mBlockToNodeMap.insert({N.getBlock(), &N});
 			return true;
 		}
 		else
@@ -115,7 +133,7 @@ public:
 	}
 
 	inline NodeType *getNode(NodeValueType Block) {
-		return BlockToNodeMap[Block];
+		return mBlockToNodeMap[Block];
 	}
 
 	inline NodeType *getEntryNode() {
@@ -135,8 +153,8 @@ public:
 	}
 private:
 	EntryNode *mEntryNode;
-	std::string FunctionName;
-	CFGNodeMapType BlockToNodeMap;
+	std::string mFunctionName;
+	CFGNodeMapType mBlockToNodeMap;
 	CFGType *mCFG;
 };
 
@@ -288,7 +306,6 @@ CDGPass<tsar::ControlDependenceGraph<Function, BasicBlock>>::CDGPass() : Functio
 
 using SourceCDGPass=CDGPass<tsar::ControlDependenceGraph<tsar::SourceCFG, tsar::SourceCFGNode>>;
 using IRCDGPass=CDGPass<tsar::ControlDependenceGraph<Function, BasicBlock>>;
-
 };//namespace llvm
 
 namespace tsar {
@@ -298,15 +315,56 @@ public:
 };
 
 class ProgramDependencyGraph  : public llvm::DataDependenceGraph {
-private:
-	using Base=llvm::DataDependenceGraph;
-	void construct(llvm::Function &F) {
+public:
+	ProgramDependencyGraph(llvm::IRCDGPass &P, llvm::Function &F, llvm::DependenceInfo &DI, const AliasTree &AT,
+			const DIAliasTree &DIAT, const llvm::TargetLibraryInfo &TLI, bool ShouldSolveReachability=true)
+			: Base(F, DI), mF(F), mAT(AT), mDIAT(DIAT), mDIATRel(&const_cast<DIAliasTree&>(DIAT)), mTLI(TLI), 
+			mSolvedReachability(ShouldSolveReachability), mDIMInfo(const_cast<DIAliasTree&>(DIAT), P, F) {
+		if (mDIMInfo.isValid())
+			mServerDIATRel=SpanningTreeRelation<const DIAliasTree*>(mDIMInfo.DIAT);
+		if (ShouldSolveReachability)
+			solveReachability();
+		std::vector<llvm::DDGNode*> NodesToRemove;
+		std::vector<std::pair<llvm::DDGNode*, llvm::DDGEdge*>> EdgesToDelete;
 		//
-		for (auto INode : *this)
-			for (auto Edge : INode->getEdges())
+		int RemovedEdges=0;
+		//
+		for (auto INode : *this) {
+			if (INode->getKind()==llvm::DDGNode::NodeKind::SingleInstruction &&
+					shouldShadow(*llvm::dyn_cast<llvm::SimpleDDGNode>(INode)->getFirstInstruction())) {
+				NodesToRemove.push_back(INode);
+				continue;
+			}
+			for (auto Edge : INode->getEdges()) {
 				assert(Edge->getKind()!=llvm::DDGEdge::EdgeKind::Unknown);
+				const llvm::Instruction &TargetInst=*llvm::dyn_cast<llvm::SimpleDDGNode>(&Edge->getTargetNode())->getFirstInstruction();
+				if (shouldShadow(TargetInst)) {
+					EdgesToDelete.push_back({INode, Edge});
+					continue;
+				}
+				// Try to exclude some memory dependence edges
+				if (Edge->getKind()==llvm::DDGEdge::EdgeKind::MemoryDependence &&
+						specifyMemoryDependence(*llvm::dyn_cast<llvm::SimpleDDGNode>(INode),
+						Edge->getTargetNode())) {
+					EdgesToDelete.push_back({INode, Edge});
+					++RemovedEdges;
+				}
+			}
+		}
+		// DEBUG:
+		std::cerr<<"Removed Edges Count - "<<RemovedEdges<<std::endl;
 		//
-		IRCDG *CDG=CDGBuilder<IRCDG>().populate(F);
+		for (auto &RQ : EdgesToDelete) {
+			RQ.first->removeEdge(*RQ.second);
+			delete RQ.second;
+		}
+		for (auto INode : NodesToRemove) {
+			for (auto Edge : *INode)
+				delete Edge;
+			Nodes.erase(findNode(*INode));
+			delete INode;
+		}
+		IRCDG *CDG=CDGBuilder<IRCDG>().populate(mF);
 		std::map<llvm::Instruction*, llvm::DDGNode*> InstrMap;
 		for (auto INode : *this)
 			if (llvm::isa<llvm::SimpleDDGNode>(INode))
@@ -316,28 +374,135 @@ private:
 			if (It.first->isTerminator()) {
 				IRCDGNode *CDGNode=CDG->getNode(It.first->getParent());
 				for (auto CDGEdge : *CDGNode) {
-					//llvm::BasicBlock *TargetBB=(llvm::dyn_cast<DefaultIRCDGNode>(CDGEdge->getTargetNode())).getBlock();
 					llvm::BasicBlock *TargetBB=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock();
 					for (auto IIt=TargetBB->begin(); IIt!=TargetBB->end(); ++IIt)
-						connect(*InstrMap[It.first], *InstrMap[&(*IIt)], *(new ControlPDGEdge(*InstrMap[&(*IIt)])));
+						if (!shouldShadow(*IIt))
+							connect(*InstrMap[It.first], *InstrMap[&(*IIt)], *(new ControlPDGEdge(*InstrMap[&(*IIt)])));
 				}
 			}
 		for (auto RootEdge : getRoot().getEdges())
 			delete RootEdge;
 		getRoot().clear();
 		for (auto CDGEdge : *(CDG->getEntryNode()))
-			//for (auto IIt=llvm::dyn_cast<DefaultIRCDGNode>(CDGEdge->getTargetNode()).getBlock()->begin();
 			for (auto IIt=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock()->begin();
-				//IIt!=llvm::dyn_cast<DefaultIRCDGNode>(&CDGEdge->getTargetNode())->getBlock()->end(); ++IIt)
-				IIt!=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock()->end(); ++IIt)
-				connect(getRoot(), *InstrMap[&(*IIt)], *(new ControlPDGEdge(*InstrMap[&(*IIt)])));
+					IIt!=((DefaultIRCDGNode*)(&CDGEdge->getTargetNode()))->getBlock()->end(); ++IIt)
+				if (!shouldShadow(*IIt))
+					connect(getRoot(), *InstrMap[&(*IIt)], *(new ControlPDGEdge(*InstrMap[&(*IIt)])));
 		delete CDG;
 	}
-public:
-	ProgramDependencyGraph(llvm::Function &F, llvm::DependenceInfo &DI)
-			: Base(F, DI) {
-		construct(F);
+private:
+	using Base=llvm::DataDependenceGraph;
+	using MemoryLocationSet=llvm::SmallDenseSet<llvm::MemoryLocation, 2>;
+
+	struct ReachabilityMatrix : public std::vector<bool> {
+		size_t NodesCount;
+		ReachabilityMatrix() = default;
+		ReachabilityMatrix(size_t _NodesCount) : std::vector<bool>(_NodesCount*_NodesCount, false), NodesCount(_NodesCount) {}
+		std::vector<bool>::reference operator()(size_t I, size_t J) {
+			return this->operator[](I*NodesCount+J);
+		}
+		std::vector<bool>::const_reference operator()(size_t I, size_t J) const {
+			return this->operator[](I*NodesCount+J);
+		}
+	};
+
+	bool shouldShadow(const llvm::Instruction &I) {
+		return I.isDebugOrPseudoInst() || I.isLifetimeStartOrEnd();
 	}
+
+	bool isReachable(const llvm::BasicBlock &From, const llvm::BasicBlock &To) {
+		return mReachabilityMatrix(mBBToInd[&From], mBBToInd[&To]);
+	}
+
+	void solveReachability() {
+		mReachabilityMatrix=ReachabilityMatrix(mF.size());
+		size_t Ind=0;
+		mBBToInd.init(mF.size());
+		for (auto &BB : mF) {
+			mReachabilityMatrix(Ind, Ind)=true;
+			mBBToInd[&BB]=Ind++;
+		}
+		for (auto &BB : mF)
+			for (auto SuccBB : llvm::successors(&BB))
+				mReachabilityMatrix(mBBToInd[&BB], mBBToInd[SuccBB])=true;
+		for (size_t K=0; K<mReachabilityMatrix.NodesCount; ++K)
+			for (size_t I=0; I<mReachabilityMatrix.NodesCount; ++I)
+				for (size_t J=0; J<mReachabilityMatrix.NodesCount; ++J)
+					mReachabilityMatrix(I, J)=mReachabilityMatrix(I, J) | (mReachabilityMatrix(I, K) & mReachabilityMatrix(K, J));
+	}
+
+	// Returns true if caller must delete edge
+	bool specifyMemoryDependence(const llvm::DDGNode &Src, const llvm::DDGNode &Dst) {
+		using namespace llvm;
+		using namespace std;
+		const Instruction &SrcInst=*dyn_cast<SimpleDDGNode>(&Src)->getFirstInstruction(),
+			&DstInst=*llvm::dyn_cast<SimpleDDGNode>(&Dst)->getFirstInstruction();
+		if (!isReachable(*SrcInst.getParent(), *DstInst.getParent()))
+			return true;
+		bool SrcUnknownMemory=false, DstUnknownMemory=false, *CurrMarker=&SrcUnknownMemory;
+		MemoryLocationSet SrcMemLocs, DstMemLocs, *CurrSet=&SrcMemLocs;
+		auto CollectMemory=[&CurrSet](Instruction &I, MemoryLocation &&MemLoc, unsigned OpInd,
+				AccessInfo IsRead, AccessInfo IsWrite) {
+			CurrSet->insert(MemLoc);
+		};
+		auto EvaluateUnknown=[&CurrMarker](Instruction&, AccessInfo, AccessInfo) {
+			*CurrMarker=true;
+		};
+		for_each_memory(const_cast<Instruction&>(SrcInst), const_cast<TargetLibraryInfo&>(mTLI),
+				CollectMemory, EvaluateUnknown);
+		CurrSet=&DstMemLocs;
+		CurrMarker=&DstUnknownMemory;
+		for_each_memory(const_cast<Instruction&>(DstInst), const_cast<TargetLibraryInfo&>(mTLI),
+				CollectMemory, EvaluateUnknown);
+		if (SrcMemLocs.empty() || DstMemLocs.empty())
+			return SrcMemLocs.empty() && !SrcUnknownMemory || DstMemLocs.empty() && !DstUnknownMemory;
+		SmallVector<DIMemory*, 2> SrcDIMems, SrcServerDIMems, DstDIMems, DstServerDIMems;
+		auto FillDIMemories=[&](const MemoryLocationSet &MemoryLocations, SmallVectorImpl<DIMemory*> &DIMemories,
+				SmallVectorImpl<DIMemory*> &ServerDIMemories) {
+			for (auto &MemLoc : MemoryLocations) {
+				const EstimateMemory *EstMem=mAT.find(MemLoc);
+				const MDNode *MDNode;
+				while (!(MDNode=getRawDIMemoryIfExists(*EstMem, mF.getContext(),
+						mF.getParent()->getDataLayout(), mAT.getDomTree())))
+					EstMem=EstMem->getParent();
+				DIMemories.push_back(&*mDIAT.find(*MDNode));
+				ServerDIMemories.push_back(mDIMInfo.findFromClient(*EstMem, SrcInst.getModule()->getDataLayout(),
+						const_cast<DominatorTree&>(mAT.getDomTree())).get<Clone>());
+			}
+		};
+		FillDIMemories(SrcMemLocs, SrcDIMems, SrcServerDIMems);
+		FillDIMemories(DstMemLocs, DstDIMems, DstServerDIMems);
+		bool ShouldDelete=true;
+		for (int SrcI=0; SrcI<SrcDIMems.size() && ShouldDelete; ++SrcI) {
+			const DIAliasNode *SrcDINode, *SrcServerDINode;
+			for (int DstI=0; DstI<DstDIMems.size() && ShouldDelete; ++DstI) {
+				const DIAliasNode *DstDINode, *DstServerDINode;
+				if (SrcDIMems[SrcI] && DstDIMems[DstI] && SrcDIMems[SrcI]->hasAliasNode() && DstDIMems[DstI]->hasAliasNode() &&
+						mDIATRel.compare(SrcDINode=SrcDIMems[SrcI]->getAliasNode(), DstDINode=DstDIMems[DstI]->getAliasNode())!=
+						TreeRelation::TR_UNREACHABLE && (!mServerDIATRel || mServerDIATRel.value().compare(SrcServerDINode=
+						SrcServerDIMems[SrcI]->getAliasNode(), DstServerDINode=DstServerDIMems[DstI]->getAliasNode())!=
+						TreeRelation::TR_UNREACHABLE))
+					ShouldDelete=false;
+			}
+		}
+		if (ShouldDelete)
+			return true;
+		else {
+			// At this point we have dependence confirmed by AliasTrees
+			return false;
+		}
+	}
+
+	llvm::Function &mF;
+	const AliasTree &mAT;
+	const DIAliasTree &mDIAT;
+	SpanningTreeRelation<const DIAliasTree*> mDIATRel;
+	const llvm::TargetLibraryInfo &mTLI;
+	bool mSolvedReachability;
+	ReachabilityMatrix mReachabilityMatrix;
+	llvm::DenseMap<const llvm::BasicBlock*, size_t> mBBToInd;
+	DIMemoryClientServerInfo mDIMInfo;
+	std::optional<SpanningTreeRelation<const DIAliasTree*>> mServerDIATRel;
 };
 }
 
