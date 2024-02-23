@@ -29,4 +29,7 @@ using namespace llvm;
 void llvm::initializeAnalysisBase(PassRegistry &Registry) {
   initializeDFRegionInfoPassPass(Registry);
   initializeAnalysisConnectionImmutableWrapperPass(Registry);
+  initializeProgramDependencyGraphPassPass(Registry);
+  initializePDGPrinterPass(Registry);
+  initializePDGViewerPass(Registry);
 }

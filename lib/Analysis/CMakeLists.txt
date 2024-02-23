@@ -1,5 +1,5 @@
 set(ANALYSIS_SOURCES Passes.cpp PrintUtils.cpp DFRegionInfo.cpp Attributes.cpp
-  Intrinsics.cpp AnalysisSocket.cpp AnalysisServer.cpp)
+  Intrinsics.cpp AnalysisSocket.cpp AnalysisServer.cpp PDG.cpp)
 
 if(MSVC_IDE)
   file(GLOB ANALYSIS_HEADERS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
