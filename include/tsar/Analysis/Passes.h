@@ -119,39 +119,21 @@ ModulePass *createAnalysisCloseConnectionPass(bool ActiveOnly = false);
 ModulePass *createAnalysisCloseConnectionPass(const void * ServerID);
 
 /// Initialize a pass to build control dependence graph from source code.
-void initializeSourceCDGPassPass(PassRegistry &Registry);
+void initializeProgramDependencyGraphPassPass(PassRegistry &Registry);
 
 /// Create a pass to build control dependence graph from source code.
-FunctionPass *createSourceCDGPass();
+FunctionPass *createProgramDependencyGraphPass();
 
 /// Initialize a pass to print control dependence graph from source code to 'dot' file.
-void initializeSourceCDGPrinterPass(PassRegistry &Registry);
+void initializePDGPrinterPass(PassRegistry &Registry);
 
 /// Create a pass to print control dependence graph from source code to 'dot' file.
-FunctionPass *createSourceCDGPrinter();
+FunctionPass *createPDGPrinter();
 
 /// Initialize a pass to display control dependence graph from source code.
-void initializeSourceCDGViewerPass(PassRegistry &Registry);
+void initializePDGViewerPass(PassRegistry &Registry);
 
-/// Create a pass to display control dependence graph from source code.
-FunctionPass *createSourceCDGViewer();
-
-/// Initialize a pass to build control dependence graph from LLVM IR.
-void initializeIRCDGPassPass(PassRegistry &Registry);
-
-/// Create a pass to build control dependence graph from LLVM IR.
-FunctionPass *createIRCDGPass();
-
-/// Initialize a pass to print control dependence graph from LLVM IR to 'dot' file.
-void initializeIRCDGPrinterPass(PassRegistry &Registry);
-
-/// Create a pass to print controld dependence graph from LLVM IR to 'dot' file.
-FunctionPass *createIRCDGPrinter();
-
-/// Initialize a pass to display control dependence graph from LLVM IR.
-void initializeIRCDGViewerPass(PassRegistry &Registry);
-
-/// Create a pass to display control dependence graph from LLVM IR.
-FunctionPass *createIRCDGViewer();
+/// Create a pass to display program dependency graph.
+FunctionPass *createPDGViewer();
 }
 #endif//TSAR_ANALYSIS_PASSES_H
